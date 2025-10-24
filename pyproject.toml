@@ -1,0 +1,14 @@
+[project]
+name = "flashygen"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.39.0",
+    "notion-client>=2.2.1",
+    "genanki>=0.13.0",
+    "python-dotenv>=1.0.0",
+    "typer>=0.15.0",
+    "rich>=13.9.0",
+]
