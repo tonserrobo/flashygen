@@ -281,10 +281,13 @@ class AnkiExporter:
             front_html = self._format_content(flashcard.front)
             back_html = self._format_content(flashcard.back)
 
+            # Sanitize tags: replace spaces with hyphens (Anki doesn't allow spaces in tags)
+            sanitized_tags = [tag.replace(' ', '-') for tag in flashcard.tags]
+
             note = genanki.Note(
                 model=self.model,
                 fields=[front_html, back_html],
-                tags=flashcard.tags
+                tags=sanitized_tags
             )
             deck.add_note(note)
 

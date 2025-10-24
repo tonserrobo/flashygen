@@ -80,16 +80,19 @@ Your task:
    - **Conceptual**: Understanding and explanation ("Why does X work?", "Explain how Y relates to Z")
    - **Application**: Practical usage ("When would you use X?", "How would you apply Y?")
    - **Comparison**: Relationships and differences ("How does X differ from Y?", "Compare A and B")
+   - **Command**: Practical how-to with exact commands/syntax ("How do you do X?", "What's the command to Y?")
 
 CRITICAL Requirements:
 - Make questions clear, specific, and unambiguous
 - Answers MUST be detailed and complete - include examples whenever possible
 - **ALWAYS include code examples in answers when the content contains code**
 - **ALWAYS include concrete examples to illustrate concepts**
+- **For technical/tool content: CREATE "command" type cards with exact syntax and usage examples**
 - Vary the question types to reinforce learning from different angles
 - Focus on understanding, not just memorization
 - Avoid redundant questions
 - For code-related content: Include syntax examples, show usage patterns, demonstrate with actual code snippets
+- For command-type cards: Show the exact command/syntax, explain what it does, and include practical examples
 - For conceptual content: Provide real-world examples, analogies, or practical scenarios
 
 Content to process:
@@ -98,7 +101,7 @@ Content to process:
 Return your response as a VALID JSON array. Each object should have:
 - "front": The question/prompt (plain string)
 - "back": The answer WITH EXAMPLES (use \\n for newlines, include code blocks)
-- "type": One of "recall", "conceptual", "application", "comparison"
+- "type": One of "recall", "conceptual", "application", "comparison", "command"
 
 CRITICAL JSON FORMATTING RULES:
 - Use \\n (backslash-n) for ALL newlines in the JSON strings
@@ -122,6 +125,11 @@ Example format with properly formatted CODE (notice the \\n for newlines):
     "front": "When should you use a list comprehension?",
     "back": "Use list comprehensions when creating a new list from an existing iterable - they're more concise and often faster:\\n\\n```python\\n# Traditional loop\\nsquares = []\\nfor x in range(5):\\n    squares.append(x**2)\\n\\n# List comprehension (better)\\nsquares = [x**2 for x in range(5)]\\nprint(squares)  # [0, 1, 4, 9, 16]\\n```\\n\\nAvoid for complex logic that hurts readability.",
     "type": "application"
+  }},
+  {{
+    "front": "How do you set the default branch name in Git during initialization?",
+    "back": "Use the git config command to set the default branch name:\\n\\n```bash\\ngit config --global init.defaultBranch main\\n```\\n\\nThis sets 'main' as the default branch name for all new repositories. You can verify with:\\n\\n```bash\\ngit config --global init.defaultBranch\\n```",
+    "type": "command"
   }}
 ]
 

@@ -1,0 +1,59 @@
+[
+  {
+    "front": "What are the three main areas in Git's architecture?",
+    "back": "Git's three-stage architecture consists of:\n\n1. **Working Directory**: Your local files where you make changes\n2. **Staging Area (Index)**: A preparation area for your next commit where you select which changes to include\n3. **Repository (.git directory)**: Where Git stores all committed snapshots of your project\n\n**Example workflow:**\n\n```bash\n# Make changes to files in working directory\necho \"Hello World\" > file.txt\n\n# Stage the changes (move to staging area)\ngit add file.txt\n\n# Commit the staged changes (save to repository)\ngit commit -m \"Add hello world file\"\n```",
+    "type": "recall"
+  },
+  {
+    "front": "Why is understanding the difference between the repository and the working directory important in Git?",
+    "back": "Understanding the difference between the **repository** and the **working directory** is important in Git because:\n\n- **Repository**: The complete history of your project stored in the `.git` folder\n- **Working Directory**: The current state of the files you're actively working on\n\nThis distinction allows you to work on changes in your local working directory without affecting the repository's history. You can stage and commit only the changes you want, preserving a clean project history.\n\nIt also enables features like branching, where you can switch between different working directories (branches) without modifying the main codebase.",
+    "type": "conceptual"
+  },
+  {
+    "front": "When would you use the `git stash` command?",
+    "back": "You would use the `git stash` command when you need to temporarily save your uncommitted changes and switch to a different branch or pull updates without committing your in-progress work.\n\n**Example use case:**\n\n```bash\n# You're working on feature-A\ngit checkout feature-A\n# ...making changes...\n\n# Urgent bug fix needed in main!\ngit stash save \"WIP: feature A progress\"\ngit checkout main\ngit checkout -b hotfix-urgent\n\n# Fix bug, commit, merge\n# ...\n\n# Return to feature-A\ngit checkout feature-A\ngit stash pop\n# Continue working on feature-A\n```\n\nStashing saves your changes temporarily, allowing you to switch contexts without committing unfinished work.",
+    "type": "application"
+  },
+  {
+    "front": "How do you compare two commits in Git?",
+    "back": "To compare the changes between two commits in Git, you can use the `git diff` command:\n\n```bash\n# Compare the last two commits\ngit diff HEAD~1 HEAD\n\n# Compare a specific commit with the current HEAD\ngit diff abc1234 HEAD\n\n# Compare two specific commits\ngit diff abc1234 def5678\n```\n\nThis will show the differences in the file contents between the specified commits. You can also use `git show` to see the full details of a specific commit.",
+    "type": "command"
+  },
+  {
+    "front": "How does the Git branching model differ from a centralized version control system like SVN?",
+    "back": "The Git branching model differs from a centralized version control system like SVN in the following ways:\n\n1. **Distributed vs. Centralized**: Git is a distributed VCS, where each developer has a full copy of the repository, including the entire history. SVN is a centralized VCS, where the main repository is hosted on a central server.\n\n2. **Branch Workflow**: In Git, branching is cheap and easy, allowing developers to create and switch between branches frequently. In SVN, branching is more heavyweight and less frequently used.\n\n3. **Merging**: In Git, merging branches is a common and straightforward operation. In SVN, merging can be more complex and error-prone due to the centralized nature of the repository.\n\n4. **Offline Development**: In Git, developers can work offline and commit changes locally. In SVN, developers need to be connected to the central server to commit changes.",
+    "type": "comparison"
+  },
+  {
+    "front": "How do you create a new Git repository and set the initial commit?",
+    "back": "To create a new Git repository and set the initial commit, follow these steps:\n\n```bash
+# Create the project folder
+mkdir my-project
+cd my-project
+
+# Initialize a new Git repository
+git init
+
+# Create initial files
+touch README.md .gitignore
+git add .
+git commit -m "Initial commit"
+```
+
+Alternatively, you can clone an existing repository:
+
+```bash
+# Clone an existing repository
+git clone https://github.com/username/repo.git
+
+# Clone to a specific folder
+git clone https://github.com/username/repo.git my-folder
+
+# Clone a specific branch
+git clone -b develop https://github.com/username/repo.git
+```
+
+After cloning, you can start making changes and committing them to the repository.",
+    "type": "command"
+  }
+]
