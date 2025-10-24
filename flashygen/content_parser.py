@@ -108,20 +108,38 @@ class NotionContentParser:
 
         return "".join(text_parts)
 
-    def extract_content_sections(self, content: str) -> List[Dict[str, str]]:
-        """Split content into sections based on headings for better flashcard generation."""
+    def extract_content_sections(self, content: str, max_heading_level: int = 2) -> List[Dict[str, str]]:
+        """Split content into sections based on heading level.
+
+        Args:
+            content: The markdown content to split
+            max_heading_level: Maximum heading level to split on (1=H1 only, 2=H1+H2)
+
+        This creates manageable chunks without over-fragmenting the content.
+        Deeper headings are kept within their parent section for context.
+        """
         sections = []
         current_section = {"heading": "", "content": []}
 
         lines = content.split("\n")
 
         for line in lines:
-            line = line.strip()
-            if not line:
+            line_stripped = line.strip()
+            if not line_stripped:
                 continue
 
-            # Check if it's a heading
-            if line.startswith("# ") or line.startswith("## ") or line.startswith("### "):
+            # Check heading level
+            is_h1 = line_stripped.startswith("# ") and not line_stripped.startswith("## ")
+            is_h2 = line_stripped.startswith("## ") and not line_stripped.startswith("### ")
+
+            # Decide if we should split on this heading
+            should_split = False
+            if max_heading_level >= 1 and is_h1:
+                should_split = True
+            elif max_heading_level >= 2 and is_h2:
+                should_split = True
+
+            if should_split:
                 # Save previous section if it has content
                 if current_section["content"]:
                     sections.append({
@@ -131,11 +149,13 @@ class NotionContentParser:
 
                 # Start new section
                 current_section = {
-                    "heading": line.lstrip("#").strip(),
+                    "heading": line_stripped.lstrip("#").strip(),
                     "content": []
                 }
-            else:
-                current_section["content"].append(line)
+                continue
+
+            # Add line to current section (including H3+ headings)
+            current_section["content"].append(line_stripped)
 
         # Add the last section
         if current_section["content"]:
@@ -145,3 +165,71 @@ class NotionContentParser:
             })
 
         return sections if sections else [{"heading": "Content", "content": content}]
+
+    def merge_small_sections(self, sections: List[Dict[str, str]], min_content_size: int = 500, max_sections: int = 50) -> List[Dict[str, str]]:
+        """Merge small sections together to avoid over-fragmentation.
+
+        Args:
+            sections: List of sections to potentially merge
+            min_content_size: Minimum content size before merging with next section
+            max_sections: Maximum number of sections to return (merge if over this)
+
+        Returns:
+            Merged sections list
+        """
+        if len(sections) <= max_sections:
+            # Check if we need to merge based on size
+            needs_merging = any(len(s.get('content', '')) < min_content_size for s in sections)
+            if not needs_merging:
+                return sections
+
+        # Calculate target sections per merge to reach max_sections
+        merge_ratio = max(1, len(sections) // max_sections)
+
+        merged = []
+        current_merged = None
+        items_in_current = 0
+
+        for i, section in enumerate(sections):
+            content = section.get('content', '')
+            heading = section.get('heading', f'Section {i+1}')
+
+            if current_merged is None:
+                # Start new merged section
+                current_merged = {
+                    'heading': heading,
+                    'content': content
+                }
+                items_in_current = 1
+            else:
+                # Check if we should merge or start new section
+                current_size = len(current_merged['content'])
+                should_merge = (
+                    current_size < min_content_size or  # Current section too small
+                    items_in_current < merge_ratio  # Haven't merged enough yet
+                )
+
+                if should_merge:
+                    # Merge with current section
+                    current_merged['content'] += f"\n\n### {heading}\n\n{content}"
+                    items_in_current += 1
+                else:
+                    # Save current and start new
+                    merged.append({
+                        'heading': current_merged['heading'],
+                        'content': current_merged['content']
+                    })
+                    current_merged = {
+                        'heading': heading,
+                        'content': content
+                    }
+                    items_in_current = 1
+
+        # Add the last merged section
+        if current_merged:
+            merged.append({
+                'heading': current_merged['heading'],
+                'content': current_merged['content']
+            })
+
+        return merged

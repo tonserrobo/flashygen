@@ -1,8 +1,9 @@
 """Generate flashcards using Claude AI."""
 
 import json
-from typing import List, Dict, Any
+from typing import List, Dict
 from anthropic import Anthropic
+from anthropic.types import TextBlock
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -12,10 +13,10 @@ console = Console()
 class Flashcard:
     """Represents a single flashcard."""
 
-    def __init__(self, front: str, back: str, tags: List[str] = None):
+    def __init__(self, front: str, back: str, tags: List[str] | None = None):
         self.front = front
         self.back = back
-        self.tags = tags or []
+        self.tags = tags if tags is not None else []
 
     def __repr__(self):
         return f"Flashcard(front='{self.front[:50]}...', back='{self.back[:50]}...')"
@@ -28,6 +29,64 @@ class FlashcardGenerator:
         """Initialize Claude client."""
         self.client = Anthropic(api_key=api_key)
         self.model = model
+
+        # Set max_tokens based on model
+        if "haiku" in model.lower():
+            self.max_tokens = 4096
+        else:
+            self.max_tokens = 8192
+
+    def generate_flashcards_from_sections(
+        self,
+        sections: List[Dict[str, str]],
+        title: str,
+        cards_per_concept: int = 3
+    ) -> List[Flashcard]:
+        """Generate flashcards from multiple content sections (chunks).
+
+        Args:
+            sections: List of dicts with 'heading' and 'content' keys
+            title: Overall title for the content
+            cards_per_concept: Number of cards to generate per concept
+
+        Returns:
+            Combined list of flashcards from all sections
+        """
+        all_flashcards = []
+
+        console.print(f"[cyan]Processing {len(sections)} section(s)...[/cyan]")
+
+        for i, section in enumerate(sections, 1):
+            heading = section.get('heading', f'Section {i}')
+            content = section.get('content', '')
+
+            if not content.strip():
+                console.print(f"[dim]Skipping empty section: {heading}[/dim]")
+                continue
+
+            console.print(f"\n[bold]Section {i}/{len(sections)}:[/bold] {heading}")
+
+            # Generate flashcards for this section
+            try:
+                section_flashcards = self.generate_flashcards(
+                    content,
+                    f"{title} - {heading}",
+                    cards_per_concept
+                )
+
+                # Add section-specific tag
+                for card in section_flashcards:
+                    if heading:
+                        card.tags.append(heading.replace(' ', '-'))
+
+                all_flashcards.extend(section_flashcards)
+                console.print(f"[green]✓[/green] Generated {len(section_flashcards)} cards for this section")
+            except Exception as e:
+                console.print(f"[yellow]⚠[/yellow] Failed to generate cards for this section: {e}")
+                console.print("[dim]Continuing with next section...[/dim]")
+                continue
+
+        return all_flashcards
 
     def generate_flashcards(
         self,
@@ -51,13 +110,19 @@ class FlashcardGenerator:
             try:
                 message = self.client.messages.create(
                     model=self.model,
-                    max_tokens=4096,
+                    max_tokens=self.max_tokens,
                     messages=[
                         {"role": "user", "content": prompt}
                     ]
                 )
 
-                response_text = message.content[0].text
+                # Extract text from the first content block
+                first_block = message.content[0]
+                if isinstance(first_block, TextBlock):
+                    response_text = first_block.text
+                else:
+                    raise ValueError(f"Unexpected content block type: {type(first_block)}")
+
                 flashcards = self._parse_response(response_text, title)
 
                 console.print(f"[green]Generated {len(flashcards)} flashcards![/green]")
@@ -147,6 +212,16 @@ Return ONLY valid JSON with escaped newlines, no other text."""
             # Find JSON in the response
             response = response.strip()
 
+            # Remove any leading text before the JSON array
+            # Sometimes Claude adds explanatory text like "Here is the JSON array..."
+            if not response.startswith('['):
+                # Find the first '[' character
+                json_start = response.find('[')
+                if json_start != -1:
+                    response = response[json_start:]
+                else:
+                    raise ValueError("No JSON array found in response")
+
             # Remove markdown code blocks if present
             if response.startswith("```"):
                 lines = response.split("\n")
@@ -156,7 +231,18 @@ Return ONLY valid JSON with escaped newlines, no other text."""
                 if response.startswith("json"):
                     response = response[4:].strip()
 
-            # Use strict=False to allow control characters in strings
+            # Check if response looks truncated (doesn't end with ])
+            if not response.rstrip().endswith(']'):
+                console.print("[yellow]Warning: Response appears truncated, attempting to parse partial JSON...[/yellow]")
+                # Try to close the JSON array
+                # Find the last complete object
+                last_complete = response.rfind('}')
+                if last_complete != -1:
+                    response = response[:last_complete+1] + '\n]'
+                else:
+                    raise ValueError("Response is too truncated to parse")
+
+            # Parse JSON with strict=False to allow control characters
             flashcard_data = json.loads(response, strict=False)
 
             flashcards = []

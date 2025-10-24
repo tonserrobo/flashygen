@@ -60,11 +60,30 @@ def generate(
 
         console.print(f"[green]✓[/green] Parsed {len(content)} characters of content")
 
+        # Extract sections for chunked processing
+        # Start with H1 only to avoid over-fragmentation
+        sections = parser.extract_content_sections(content, max_heading_level=1)
+        console.print(f"[dim]Detected {len(sections)} raw section(s) (H1 level)[/dim]")
+
+        # If too few sections and content is large, try H1+H2
+        if len(sections) < 3 and len(content) > 10000:
+            console.print("[dim]Trying H1+H2 split for better coverage...[/dim]")
+            sections = parser.extract_content_sections(content, max_heading_level=2)
+            console.print(f"[dim]Detected {len(sections)} raw section(s) (H1+H2 level)[/dim]")
+
+        # Merge small sections to avoid over-fragmentation
+        if len(sections) > 20:
+            console.print(f"[yellow]Warning: {len(sections)} sections is too many. Merging sections...[/yellow]")
+            sections = parser.merge_small_sections(sections, min_content_size=800, max_sections=20)
+            console.print(f"[dim]Merged down to {len(sections)} section(s)[/dim]")
+
         # Step 3: Generate flashcards with Claude
         console.print(f"\n[bold]Step 3:[/bold] Generating flashcards with Claude (target: {cards_per_concept} per concept)...")
         generator = FlashcardGenerator(config.anthropic_api_key, config.model)
-        flashcards = generator.generate_flashcards(
-            content,
+
+        # Use chunked processing for better coverage of large notes
+        flashcards = generator.generate_flashcards_from_sections(
+            sections,
             page_data['title'],
             cards_per_concept
         )

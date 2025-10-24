@@ -14,8 +14,14 @@ class Config:
     def __init__(self):
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         self.notion_token = os.getenv("NOTION_TOKEN")
-        self.cards_per_concept = 5
         self.model = "claude-3-haiku-20240307"
+
+        # Adjust cards_per_concept based on model
+        # Haiku has lower max_tokens (4096) so we need fewer cards
+        if "haiku" in self.model.lower():
+            self.cards_per_concept = 2
+        else:
+            self.cards_per_concept = 5
 
     def validate(self) -> tuple[bool, str]:
         """Validate that required configuration is present."""
