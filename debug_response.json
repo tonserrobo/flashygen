@@ -1,33 +1,52 @@
 [
   {
-    "front": "What is the purpose of the git commit -m command?",
-    "back": "The `git commit -m` command is used to create a new commit in the Git repository with a provided commit message.\n\nThe `-m` option allows you to specify the commit message directly on the command line, rather than opening a text editor to write the message.\n\nFor example:\n\n```bash
-git commit -m "Merge feature-login: Resolve authentication conflicts"
-```\n\nThis creates a new commit with the provided message, capturing the current state of the repository. The commit message should be a brief, meaningful description of the changes included in the commit.",
+    "front": "What is auto in C++ type deduction?",
+    "back": "auto is a keyword that enables automatic type inference by the compiler:\n\n```cpp\nauto x = 42;         // int\nauto y = 3.14;       // double\nauto str = \"hello\";  // const char*\n```\n\nThe compiler determines the type based on the initializer.",
     "type": "recall"
   },
   {
-    "front": "Why is it important to provide a clear and descriptive commit message when merging?",
-    "back": "Providing a clear and descriptive commit message when merging is important for several reasons:\n\n1. **Collaboration and Understanding**: The commit message helps other developers understand the context and reasoning behind the merge, making it easier to collaborate and maintain the codebase.\n\n2. **Code Review and Debugging**: The commit message provides valuable information for code reviewers and future developers who may need to debug or investigate the changes made during the merge.\n\n3. **Version Control and History**: The commit message becomes part of the repository's history, providing a detailed record of the changes and the rationale behind them.\n\nIn the example, the commit message \"Merge feature-login: Resolve authentication conflicts\" clearly explains that the merge resolves authentication conflicts between the main branch and the feature-login branch. This helps other team members understand the context and purpose of the merge.",
+    "front": "How does decltype work in type deduction?",
+    "back": "decltype extracts the type of an expression without evaluating it:\n\n```cpp\nint x = 10;\ndecltype(x) y = 20;  // y is an int\ndecltype(x + y) z;   // z is an int\n```\n\nIt's useful for complex type inference in templates and generic programming.",
     "type": "conceptual"
   },
   {
-    "front": "When would you use the git commit -m command to merge changes?",
-    "back": "You would typically use the `git commit -m` command to merge changes when:\n\n1. **Resolving Conflicts**: After resolving conflicts during a merge, you would use `git commit -m` to create a new commit that incorporates the resolved conflicts.\n\n2. **Merging Feature Branches**: When merging a feature branch back into the main branch, you would use `git commit -m` to create a new commit that captures the merged changes.\n\n3. **Squashing Commits**: During a merge, you may want to squash multiple commits into a single commit, in which case you would use `git commit -m` to create the final, squashed commit.\n\n4. **Merging with a Fast-forward**: In some cases, a merge can be performed with a fast-forward, where no new commit is created. In this scenario, you would still use `git commit -m` to create the merge commit.\n\nThe example given, `git commit -m "Merge feature-login: Resolve authentication conflicts"`, is a common use case where the `git commit -m` command is used to create a merge commit that resolves authentication conflicts between the main branch and a feature branch.",
+    "front": "When would you use auto&&  in type deduction?",
+    "back": "auto&& enables perfect forwarding and can bind to both lvalues and rvalues:\n\n```cpp\ntemplate<typename T>\nvoid func(T&& arg) {\n\tauto&& forwarded = std::forward<T>(arg);\n\t// Can forward argument preserving its value category\n}\n```\n\nAllows preserving the original value category of arguments.",
     "type": "application"
   },
   {
-    "front": "How does the git commit -m command differ from a regular git commit?",
-    "back": "The main difference between `git commit -m` and a regular `git commit` command is the way the commit message is provided:\n\n**`git commit -m`:**\n- The commit message is specified directly on the command line using the `-m` option.\n- This is a more concise way to create a commit and is useful for simple, one-line commit messages.\n\n**Regular `git commit`:**\n- The commit message is entered in a text editor, which opens after running the `git commit` command.\n- This allows for more detailed, multi-line commit messages and provides more flexibility for the commit message content.\n\nBoth commands create a new commit in the Git repository, but the `git commit -m` approach is more suitable for simple, straightforward commit messages, while the regular `git commit` is better for more complex or longer commit messages that require more detailed explanation.",
+    "front": "What are the limitations of auto type deduction?",
+    "back": "auto has several type deduction limitations:\n\n```cpp\n// Removes references\nauto x = someRef;    // Loses reference\n\n// Doesn't work with braced initialization\nauto y{42};         // Doesn't deduce int\n\n// Strips const/volatile qualifiers\nauto z = const_var; // Loses const\n```\n\nRequires careful understanding of type inference rules.",
     "type": "comparison"
   },
   {
-    "front": "How do you merge feature branches using the git commit -m command?",
-    "back": "To merge a feature branch using the `git commit -m` command, follow these steps:\n\n1. Ensure you are on the main or target branch where you want to merge the changes:\n\n```bash
-git checkout main
-```\n\n2. Merge the feature branch into the current branch:\n\n```bash
-git merge feature-login -m "Merge feature-login: Resolve authentication conflicts"
-```\n\nThis will:\n\n- Merge the `feature-login` branch into the current branch (assumed to be `main`)\n- Create a new merge commit with the provided message `"Merge feature-login: Resolve authentication conflicts"`\n\nIf there are any conflicts that need to be resolved, you would do so before running the `git commit -m` command to create the final merge commit.",
+    "front": "How do you use decltype(auto) in C++14?",
+    "back": "decltype(auto) preserves the exact type, including references:\n\n```cpp\ntemplate<typename T>\ndecltype(auto) func(T&& arg) {\n\treturn std::forward<T>(arg);\n}\n\n// Preserves original type exactly\n```\n\nUseful for perfect return type deduction in templates.",
     "type": "command"
+  },
+  {
+    "front": "What is move semantics in C++?",
+    "back": "Move semantics allows efficient transfer of resources without deep copying:\n\n```cpp\nstd::vector<int> createVector() {\n\tstd::vector<int> vec{1, 2, 3};\n\treturn vec;  // Uses move constructor\n}\n\nauto newVec = createVector();  // Moves resources\n```\n\nPrevents unnecessary copying of large objects.",
+    "type": "conceptual"
+  },
+  {
+    "front": "How do you implement a move constructor?",
+    "back": "Move constructor transfers resources and leaves source object in valid state:\n\n```cpp\nclass MyClass {\n\tstd::vector<int> data;\npublic:\n\t// Move constructor\n\tMyClass(MyClass&& other) noexcept :\n\t\tdata(std::move(other.data)) {}\n};\n```\n\nUses std::move to transfer resources efficiently.",
+    "type": "command"
+  },
+  {
+    "front": "What is std::move and how does it work?",
+    "back": "std::move converts an lvalue to an rvalue reference, enabling move semantics:\n\n```cpp\nstd::string s1 = \"hello\";\nstd::string s2 = std::move(s1);  // Transfers ownership\n\n// s1 is now in valid but unspecified state\n```\n\nDoesn't actually move anything, just casts to rvalue reference.",
+    "type": "application"
+  },
+  {
+    "front": "Difference between lvalue and rvalue references?",
+    "back": "Lvalue references bind to named objects, rvalue references bind to temporary objects:\n\n```cpp\nint x = 10;        // x is an lvalue\nint& lref = x;     // Lvalue reference\nint&& rref = 42;   // Rvalue reference to temporary\n```\n\nRvalue references enable move semantics and perfect forwarding.",
+    "type": "comparison"
+  },
+  {
+    "front": "What is perfect forwarding in templates?",
+    "back": "Perfect forwarding preserves the value category of arguments using universal references:\n\n```cpp\ntemplate<typename T>\nvoid wrapper(T&& arg) {\n\tinner(std::forward<T>(arg));\n}\n```\n\nAllows seamless argument passing while maintaining original reference type.",
+    "type": "conceptual"
   }
 ]

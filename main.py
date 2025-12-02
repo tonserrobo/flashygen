@@ -23,6 +23,7 @@ def generate(
     output: str = typer.Option(None, "--output", "-o", help="Output file path (default: page_title.apkg)"),
     cards_per_concept: int = typer.Option(3, "--cards", "-c", help="Number of cards per concept"),
     deck_name: str = typer.Option(None, "--deck-name", "-d", help="Custom deck name (default: page title)"),
+    provider: str = typer.Option("ollama", "--provider", "-p", help="AI provider: 'ollama' (default) or 'claude'"),
 ):
     """Generate flashcards from a Notion page."""
 
@@ -32,13 +33,17 @@ def generate(
     ))
 
     # Load configuration
-    config = get_config()
+    config = get_config(provider)
     valid, message = config.validate()
 
     if not valid:
         console.print(f"[red]Configuration error: {message}[/red]")
         console.print("[yellow]Please check your .env file. See .env.example for reference.[/yellow]")
         raise typer.Exit(1)
+
+    # Show which provider is being used
+    provider_name = "Claude" if config.provider == "claude" else f"Ollama ({config.model})"
+    console.print(f"[dim]Using AI provider: {provider_name}[/dim]")
 
     try:
         # Step 1: Fetch Notion page
@@ -65,11 +70,16 @@ def generate(
         sections = parser.extract_content_sections(content, max_heading_level=1)
         console.print(f"[dim]Detected {len(sections)} raw section(s) (H1 level)[/dim]")
 
-        # If too few sections and content is large, try H1+H2
-        if len(sections) < 3 and len(content) > 10000:
-            console.print("[dim]Trying H1+H2 split for better coverage...[/dim]")
-            sections = parser.extract_content_sections(content, max_heading_level=2)
-            console.print(f"[dim]Detected {len(sections)} raw section(s) (H1+H2 level)[/dim]")
+        # If too few sections (regardless of content size), try H1+H2 for better granularity
+        if len(sections) < 3:
+            console.print("[dim]Too few sections, trying H1+H2 split for better coverage...[/dim]")
+            sections_h2 = parser.extract_content_sections(content, max_heading_level=2)
+            # Only use H2 split if it gives us more sections
+            if len(sections_h2) > len(sections):
+                sections = sections_h2
+                console.print(f"[dim]Detected {len(sections)} raw section(s) (H1+H2 level)[/dim]")
+            else:
+                console.print(f"[dim]No improvement with H2 split, keeping {len(sections)} section(s)[/dim]")
 
         # Merge small sections to avoid over-fragmentation
         if len(sections) > 20:
@@ -77,9 +87,23 @@ def generate(
             sections = parser.merge_small_sections(sections, min_content_size=800, max_sections=20)
             console.print(f"[dim]Merged down to {len(sections)} section(s)[/dim]")
 
-        # Step 3: Generate flashcards with Claude
-        console.print(f"\n[bold]Step 3:[/bold] Generating flashcards with Claude (target: {cards_per_concept} per concept)...")
-        generator = FlashcardGenerator(config.anthropic_api_key, config.model)
+        # For Claude Haiku, split large sections to avoid token limit truncation
+        if config.provider == "claude" and "haiku" in config.model.lower():
+            console.print("[dim]Using Haiku - splitting large sections to avoid truncation...[/dim]")
+            sections_before = len(sections)
+            sections = parser.split_large_sections(sections, max_section_size=2500)
+            if len(sections) > sections_before:
+                console.print(f"[dim]Split into {len(sections)} smaller section(s) for better coverage[/dim]")
+
+        # Step 3: Generate flashcards with AI
+        provider_display = "Claude" if config.provider == "claude" else "Ollama"
+        console.print(f"\n[bold]Step 3:[/bold] Generating flashcards with {provider_display} (target: {cards_per_concept} per concept)...")
+        generator = FlashcardGenerator(
+            config.anthropic_api_key,
+            config.model,
+            provider=config.provider,
+            ollama_base_url=config.ollama_base_url
+        )
 
         # Use chunked processing for better coverage of large notes
         flashcards = generator.generate_flashcards_from_sections(
