@@ -1,10 +1,32 @@
-I apologize, but the content you provided appears to be incomplete or insufficient for creating flashcards. The input contains only a YouTube video link and a text fragment that doesn't provide substantial information about adding armature to characters or any specific technical details.
-
-To create meaningful flashcards, I would need:
-1. The actual content from the Notion page
-2. Specific details about character armature
-3. Technical instructions or common errors related to armature creation
-
-If you'd like me to create flashcards, please provide the full text content from your Notion page. Without the source material, I cannot generate the requested JSON flashcard array.
-
-Would you like to paste the complete content from your Notion page?
+[
+    {
+        "front": "What is the first step in weight painting workflow for character rigging?",
+        "back": "Start with **Automatic Weights** by pressing `Ctrl+P` when parenting the mesh to the armature. This provides a baseline weight distribution.",
+        "type": "recall"
+    },
+    {
+        "front": "How should you approach testing weight deformation in character rigging?",
+        "back": "Test deformation by posing bones and carefully identifying problem areas in the mesh's movement and distortion.",
+        "type": "application"
+    },
+    {
+        "front": "What is the recommended strategy for weight painting corrections?",
+        "back": "Paint corrections incrementally:\n- Make small changes\n- Test often\n- Verify mesh deformation after each adjustment",
+        "type": "conceptual"
+    },
+    {
+        "front": "Why use 'Limit Total' before exporting character weights?",
+        "back": "Use 'Limit Total' to restrict weight influence, typically limiting to 4 bones max for game compatibility and performance optimization.",
+        "type": "application"
+    },
+    {
+        "front": "What is an efficient workflow for symmetrical character weight painting?",
+        "back": "For symmetrical characters:\n1. Paint weights on one side of the character\n2. Mirror the weights to the opposite side",
+        "type": "command"
+    },
+    {
+        "front": "What resources are available for troubleshooting weight painting errors?",
+        "back": "Multiple resources for fixing automatic weights:\n- Blender Artists forum discussion\n- Blender StackExchange Q&A\n- YouTube tutorials covering weight painting techniques",
+        "type": "recall"
+    }
+]
