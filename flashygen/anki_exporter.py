@@ -315,7 +315,9 @@ class AnkiExporter:
 
         # Store code blocks to protect them from other processing
         code_blocks = []
-        code_block_placeholder = "___CODE_BLOCK_{}___"
+        # Use HTML comment style placeholder to avoid being mangled by markdown
+        # formatting (triple underscores were consumed by bold/italic processing)
+        code_block_placeholder = "<!--CODEBLOCK{}-->"
 
         # Extract and store code blocks
         def store_code_block(match):
@@ -332,9 +334,9 @@ class AnkiExporter:
             code_blocks.append(html_code)
             return code_block_placeholder.format(index)
 
-        # Extract code blocks first (more flexible regex that handles various newline patterns)
+        # Extract code blocks first (flexible regex - newline after language is optional)
         text = re.sub(
-            r'```(\w+)?\s*\n(.*?)\n?\s*```',
+            r'```(\w+)?\s*(.*?)\s*```',
             store_code_block,
             text,
             flags=re.DOTALL
