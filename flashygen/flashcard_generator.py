@@ -54,11 +54,8 @@ class FlashcardGenerator:
                 raise ImportError("ollama package not installed. Install with: pip install ollama")
             self.client = None  # Ollama uses module-level functions
 
-        # Set max_tokens based on model
-        if "haiku" in model.lower():
-            self.max_tokens = 4096
-        else:
-            self.max_tokens = 8192
+        # All current models support 8192 output tokens
+        self.max_tokens = 8192
 
     def generate_flashcards_from_sections(
         self,

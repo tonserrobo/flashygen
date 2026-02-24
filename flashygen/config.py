@@ -27,7 +27,7 @@ class Config:
 
         # Set model based on provider
         if self.provider == "claude":
-            self.model = "claude-3-5-haiku-20241022"  # Using Haiku (subscription constraint)
+            self.model = "claude-haiku-4-5-20251001"
         else:
             self.model = self.ollama_model
 

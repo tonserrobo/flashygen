@@ -87,14 +87,6 @@ def generate(
             sections = parser.merge_small_sections(sections, min_content_size=800, max_sections=20)
             console.print(f"[dim]Merged down to {len(sections)} section(s)[/dim]")
 
-        # For Claude Haiku, split large sections to avoid token limit truncation
-        if config.provider == "claude" and "haiku" in config.model.lower():
-            console.print("[dim]Using Haiku - splitting large sections to avoid truncation...[/dim]")
-            sections_before = len(sections)
-            sections = parser.split_large_sections(sections, max_section_size=2500)
-            if len(sections) > sections_before:
-                console.print(f"[dim]Split into {len(sections)} smaller section(s) for better coverage[/dim]")
-
         # Step 3: Generate flashcards with AI
         provider_display = "Claude" if config.provider == "claude" else "Ollama"
         console.print(f"\n[bold]Step 3:[/bold] Generating flashcards with {provider_display} (target: {cards_per_concept} per concept)...")
