@@ -109,7 +109,8 @@ def generate(
         flashcards = generator.generate_flashcards_from_sections(
             sections,
             page_data['title'],
-            cards_per_concept
+            cards_per_concept,
+            hierarchy=page_data.get('hierarchy', [])
         )
 
         if not flashcards:

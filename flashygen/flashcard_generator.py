@@ -64,7 +64,8 @@ class FlashcardGenerator:
         self,
         sections: List[Dict[str, str]],
         title: str,
-        cards_per_concept: int = 3
+        cards_per_concept: int = 3,
+        hierarchy: List[str] | None = None
     ) -> List[Flashcard]:
         """Generate flashcards from multiple content sections (chunks).
 
@@ -72,6 +73,8 @@ class FlashcardGenerator:
             sections: List of dicts with 'heading' and 'content' keys
             title: Overall title for the content
             cards_per_concept: Number of cards to generate per concept
+            hierarchy: List of parent page titles from Notion (top-down),
+                       e.g. ["Python", "Functions"] for a page under Python > Functions
 
         Returns:
             Combined list of flashcards from all sections
@@ -79,6 +82,14 @@ class FlashcardGenerator:
         all_flashcards = []
 
         console.print(f"[cyan]Processing {len(sections)} section(s)...[/cyan]")
+
+        # Build hierarchical tag from Notion page ancestry + current page title
+        # e.g. ["Python", "Functions"] + "Type Hinting" -> "Python::Functions::Type-Hinting"
+        hierarchy = hierarchy or []
+        tag_parts = [part.replace(' ', '-') for part in hierarchy + [title]]
+        hierarchy_tag = "::".join(tag_parts)
+
+        console.print(f"[dim]Tag hierarchy: {hierarchy_tag}[/dim]")
 
         for i, section in enumerate(sections, 1):
             heading = section.get('heading', f'Section {i}')
@@ -98,10 +109,8 @@ class FlashcardGenerator:
                     cards_per_concept
                 )
 
-                # Add section-specific tag
                 for card in section_flashcards:
-                    if heading:
-                        card.tags.append(heading.replace(' ', '-'))
+                    card.tags = [hierarchy_tag]
 
                 all_flashcards.extend(section_flashcards)
                 console.print(f"[green]✓[/green] Generated {len(section_flashcards)} cards for this section")
@@ -407,8 +416,9 @@ Return ONLY valid JSON with escaped newlines, no other text."""
                 card_type = item.get("type", "recall")
 
                 if front and back:
-                    tags = [title, card_type]
-                    flashcards.append(Flashcard(front, back, tags))
+                    # Tags are overwritten by generate_flashcards_from_sections
+                    # with proper hierarchy tags from Notion page ancestry
+                    flashcards.append(Flashcard(front, back, []))
 
             return flashcards
 
