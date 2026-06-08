@@ -313,27 +313,41 @@ class AnkiExporter:
         import re
         import html
 
-        # First, protect code blocks from line break conversion
-        # Convert code blocks (```language\ncode\n``` or just ```\ncode\n```)
-        def format_code_block(match):
+        # Store code blocks to protect them from other processing
+        code_blocks = []
+        # Use HTML comment style placeholder to avoid being mangled by markdown
+        # formatting (triple underscores were consumed by bold/italic processing)
+        code_block_placeholder = "<!--CODEBLOCK{}-->"
+
+        # Extract and store code blocks
+        def store_code_block(match):
             language = match.group(1) or 'code'
             code = match.group(2).strip()
 
-            # Apply syntax highlighting
+            # Apply syntax highlighting (which includes HTML escaping)
             highlighted_code = self._highlight_code(code, language)
 
             # Build the pre tag with language attribute for CSS
-            return f'<pre data-language="{language}"><code>{highlighted_code}</code></pre>'
+            html_code = f'<pre data-language="{language}"><code>{highlighted_code}</code></pre>'
 
+            index = len(code_blocks)
+            code_blocks.append(html_code)
+            return code_block_placeholder.format(index)
+
+        # Extract code blocks first (flexible regex - newline after language is optional)
         text = re.sub(
-            r'```(\w+)?\s*\n(.*?)```',
-            format_code_block,
+            r'```(\w+)?\s*(.*?)\s*```',
+            store_code_block,
             text,
             flags=re.DOTALL
         )
 
-        # Convert inline code (`code`)
-        text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+        # Convert inline code (`code`) - escape HTML inside
+        def format_inline_code(match):
+            code_content = html.escape(match.group(1))
+            return f'<code>{code_content}</code>'
+
+        text = re.sub(r'`([^`]+)`', format_inline_code, text)
 
         # Convert bold (**text** or __text__)
         text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
@@ -343,73 +357,21 @@ class AnkiExporter:
         text = re.sub(r'(?<!\\)\*([^*]+?)\*', r'<em>\1</em>', text)
         text = re.sub(r'(?<!\\)_([^_]+?)_', r'<em>\1</em>', text)
 
-        # Convert remaining line breaks to <br>
+        # Convert remaining line breaks to <br> (but not in code blocks)
         text = text.replace('\n', '<br>')
+
+        # Restore code blocks
+        for i, code_block in enumerate(code_blocks):
+            text = text.replace(code_block_placeholder.format(i), code_block)
 
         return text
 
     def _highlight_code(self, code: str, language: str) -> str:
-        """Apply syntax highlighting to code blocks for multiple languages."""
-        import re
+        """Escape code content for safe HTML rendering inside a <pre><code> block."""
         import html
 
-        # Escape HTML first
+        # Just escape HTML — no regex-based syntax highlighting, which corrupts
+        # the output by matching inside its own injected span tags.
         code = html.escape(code)
-
-        # Define common keywords for various languages
-        keywords_map = {
-            'python': r'\b(def|class|import|from|as|if|elif|else|for|while|in|return|try|except|finally|with|lambda|yield|async|await|pass|break|continue|raise|assert|global|nonlocal|and|or|not|is|True|False|None)\b',
-            'javascript': r'\b(function|const|let|var|if|else|for|while|return|class|extends|import|export|from|as|async|await|try|catch|finally|throw|new|this|super|static|yield|break|continue|switch|case|default|typeof|instanceof|in|of|delete|void|true|false|null|undefined)\b',
-            'typescript': r'\b(function|const|let|var|if|else|for|while|return|class|extends|implements|import|export|from|as|async|await|try|catch|finally|throw|new|this|super|static|yield|break|continue|switch|case|default|typeof|instanceof|in|of|delete|void|true|false|null|undefined|interface|type|enum|namespace|abstract|readonly|public|private|protected)\b',
-            'java': r'\b(public|private|protected|class|interface|extends|implements|new|return|if|else|for|while|do|switch|case|default|break|continue|try|catch|finally|throw|throws|import|package|static|final|abstract|synchronized|volatile|transient|native|strictfp|void|boolean|byte|char|short|int|long|float|double|true|false|null|this|super)\b',
-            'c': r'\b(int|char|float|double|void|struct|union|enum|typedef|sizeof|if|else|for|while|do|switch|case|default|break|continue|return|goto|auto|register|static|extern|const|volatile|signed|unsigned|short|long)\b',
-            'cpp': r'\b(int|char|float|double|void|bool|struct|class|union|enum|typedef|namespace|using|template|typename|public|private|protected|virtual|override|final|static|const|volatile|mutable|if|else|for|while|do|switch|case|default|break|continue|return|try|catch|throw|new|delete|this|nullptr|true|false)\b',
-            'go': r'\b(package|import|func|var|const|type|struct|interface|map|chan|if|else|for|range|switch|case|default|break|continue|return|defer|go|select|fallthrough|goto|true|false|nil|make|new|len|cap|append|copy|delete|panic|recover)\b',
-            'rust': r'\b(fn|let|mut|const|static|struct|enum|impl|trait|type|mod|use|pub|crate|super|self|if|else|match|loop|while|for|in|break|continue|return|move|ref|as|unsafe|async|await|dyn|true|false|Some|None|Ok|Err)\b',
-            'ruby': r'\b(def|class|module|if|elsif|else|unless|case|when|for|while|until|loop|break|next|return|yield|begin|rescue|ensure|end|do|then|and|or|not|true|false|nil|self|super|include|extend|require|attr_accessor|attr_reader|attr_writer)\b',
-            'php': r'\b(function|class|interface|trait|extends|implements|new|return|if|else|elseif|for|foreach|while|do|switch|case|default|break|continue|try|catch|finally|throw|public|private|protected|static|final|abstract|const|var|echo|print|require|include|namespace|use|as|true|false|null|this|self|parent)\b',
-            'sql': r'\b(SELECT|FROM|WHERE|JOIN|INNER|LEFT|RIGHT|OUTER|ON|GROUP|BY|ORDER|ASC|DESC|HAVING|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|DATABASE|INDEX|ALTER|DROP|TRUNCATE|UNION|ALL|DISTINCT|AS|AND|OR|NOT|IN|BETWEEN|LIKE|IS|NULL|TRUE|FALSE)\b',
-            'shell': r'\b(if|then|else|elif|fi|case|esac|for|while|until|do|done|function|return|exit|break|continue|echo|printf|read|cd|ls|mkdir|rm|cp|mv|grep|sed|awk|sudo|chmod|chown|export|source|alias)\b',
-            'bash': r'\b(if|then|else|elif|fi|case|esac|for|while|until|do|done|function|return|exit|break|continue|echo|printf|read|cd|ls|mkdir|rm|cp|mv|grep|sed|awk|sudo|chmod|chown|export|source|alias)\b',
-        }
-
-        # Get keyword pattern for this language (default to python if unknown)
-        keyword_pattern = keywords_map.get(language.lower(), keywords_map.get('python', ''))
-
-        # Highlight comments (various styles)
-        # Single-line comments: //, #, --
-        code = re.sub(r'(//[^\n]*)', r'<span class="comment">\1</span>', code)
-        code = re.sub(r'(#[^\n]*)', r'<span class="comment">\1</span>', code)
-        code = re.sub(r'(--[^\n]*)', r'<span class="comment">\1</span>', code)
-
-        # Multi-line comments: /* */, """ """, ''' '''
-        code = re.sub(r'(/\*.*?\*/)', r'<span class="comment">\1</span>', code, flags=re.DOTALL)
-        code = re.sub(r'(""".*?""")', r'<span class="comment">\1</span>', code, flags=re.DOTALL)
-        code = re.sub(r"('''.*?''')", r'<span class="comment">\1</span>', code, flags=re.DOTALL)
-
-        # Highlight strings (before keywords to avoid highlighting keywords in strings)
-        # Double quotes
-        code = re.sub(r'(?<!class=)("(?:[^"\\]|\\.)*")', r'<span class="string">\1</span>', code)
-        # Single quotes
-        code = re.sub(r"(?<!class=)('(?:[^'\\]|\\.)*')", r'<span class="string">\1</span>', code)
-        # Backticks (for template literals)
-        code = re.sub(r'(`(?:[^`\\]|\\.)*`)', r'<span class="string">\1</span>', code)
-
-        # Highlight keywords
-        if keyword_pattern:
-            code = re.sub(keyword_pattern, r'<span class="keyword">\1</span>', code)
-
-        # Highlight numbers
-        code = re.sub(r'\b(\d+\.?\d*)\b', r'<span class="number">\1</span>', code)
-
-        # Highlight function calls (word followed by parenthesis)
-        code = re.sub(r'\b([a-zA-Z_]\w*)\s*(?=\()', r'<span class="function">\1</span>', code)
-
-        # Highlight operators (be careful not to double-wrap already highlighted code)
-        # Skip this step if it causes issues with nested spans
-        # The simpler highlighting above is sufficient for most use cases
-
-        # Convert line breaks to <br>
         code = code.replace('\n', '<br>')
-
         return code

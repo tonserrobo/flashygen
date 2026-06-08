@@ -1,4 +1,4 @@
-"""Generate flashcards using Claude AI."""
+"""Generate flashcards using AI (Claude or Ollama)."""
 
 import json
 from typing import List, Dict
@@ -6,6 +6,12 @@ from anthropic import Anthropic
 from anthropic.types import TextBlock
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
+
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
 
 console = Console()
 
@@ -23,24 +29,40 @@ class Flashcard:
 
 
 class FlashcardGenerator:
-    """Generate flashcards from content using Claude."""
+    """Generate flashcards from content using AI (Claude or Ollama)."""
 
-    def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-20241022"):
-        """Initialize Claude client."""
-        self.client = Anthropic(api_key=api_key)
+    def __init__(self, api_key: str | None, model: str = "claude-3-5-sonnet-20241022",
+                 provider: str = "ollama", ollama_base_url: str = "http://localhost:11434"):
+        """Initialize AI client.
+
+        Args:
+            api_key: Anthropic API key (only required for Claude provider)
+            model: Model name to use
+            provider: Either "ollama" or "claude"
+            ollama_base_url: Base URL for Ollama server (default: http://localhost:11434)
+        """
+        self.provider = provider.lower()
         self.model = model
+        self.ollama_base_url = ollama_base_url
 
-        # Set max_tokens based on model
-        if "haiku" in model.lower():
-            self.max_tokens = 4096
-        else:
-            self.max_tokens = 8192
+        if self.provider == "claude":
+            if not api_key:
+                raise ValueError("API key required for Claude provider")
+            self.client = Anthropic(api_key=api_key)
+        else:  # ollama
+            if not OLLAMA_AVAILABLE:
+                raise ImportError("ollama package not installed. Install with: pip install ollama")
+            self.client = ollama.Client(host=self.ollama_base_url)
+
+        # All current models support 8192 output tokens
+        self.max_tokens = 8192
 
     def generate_flashcards_from_sections(
         self,
         sections: List[Dict[str, str]],
         title: str,
-        cards_per_concept: int = 3
+        cards_per_concept: int = 3,
+        hierarchy: List[str] | None = None
     ) -> List[Flashcard]:
         """Generate flashcards from multiple content sections (chunks).
 
@@ -48,6 +70,8 @@ class FlashcardGenerator:
             sections: List of dicts with 'heading' and 'content' keys
             title: Overall title for the content
             cards_per_concept: Number of cards to generate per concept
+            hierarchy: List of parent page titles from Notion (top-down),
+                       e.g. ["Python", "Functions"] for a page under Python > Functions
 
         Returns:
             Combined list of flashcards from all sections
@@ -55,6 +79,14 @@ class FlashcardGenerator:
         all_flashcards = []
 
         console.print(f"[cyan]Processing {len(sections)} section(s)...[/cyan]")
+
+        # Build hierarchical tag from Notion page ancestry + current page title
+        # e.g. ["Python", "Functions"] + "Type Hinting" -> "Python::Functions::Type-Hinting"
+        hierarchy = hierarchy or []
+        tag_parts = [part.replace(' ', '-') for part in hierarchy + [title]]
+        hierarchy_tag = "::".join(tag_parts)
+
+        console.print(f"[dim]Tag hierarchy: {hierarchy_tag}[/dim]")
 
         for i, section in enumerate(sections, 1):
             heading = section.get('heading', f'Section {i}')
@@ -74,10 +106,8 @@ class FlashcardGenerator:
                     cards_per_concept
                 )
 
-                # Add section-specific tag
                 for card in section_flashcards:
-                    if heading:
-                        card.tags.append(heading.replace(' ', '-'))
+                    card.tags = [hierarchy_tag]
 
                 all_flashcards.extend(section_flashcards)
                 console.print(f"[green]✓[/green] Generated {len(section_flashcards)} cards for this section")
@@ -94,11 +124,12 @@ class FlashcardGenerator:
         title: str,
         cards_per_concept: int = 3
     ) -> List[Flashcard]:
-        """Generate flashcards from content using Claude."""
+        """Generate flashcards from content using AI."""
 
         prompt = self._build_prompt(content, title, cards_per_concept)
 
-        console.print("[cyan]Generating flashcards with Claude...[/cyan]")
+        provider_name = "Claude" if self.provider == "claude" else "Ollama"
+        console.print(f"[cyan]Generating flashcards with {provider_name}...[/cyan]")
 
         with Progress(
             SpinnerColumn(),
@@ -108,20 +139,50 @@ class FlashcardGenerator:
             progress.add_task(description="Thinking...", total=None)
 
             try:
-                message = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=self.max_tokens,
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ]
-                )
+                if self.provider == "claude":
+                    # Use Anthropic Claude
+                    message = self.client.messages.create(
+                        model=self.model,
+                        max_tokens=self.max_tokens,
+                        messages=[
+                            {"role": "user", "content": prompt}
+                        ]
+                    )
 
-                # Extract text from the first content block
-                first_block = message.content[0]
-                if isinstance(first_block, TextBlock):
-                    response_text = first_block.text
+                    # Extract text from the first content block
+                    first_block = message.content[0]
+                    if isinstance(first_block, TextBlock):
+                        response_text = first_block.text
+                    else:
+                        raise ValueError(f"Unexpected content block type: {type(first_block)}")
                 else:
-                    raise ValueError(f"Unexpected content block type: {type(first_block)}")
+                    # Use Ollama with optimized settings for different models
+                    # Configure context window and other options based on model
+                    options = {
+                        "temperature": 0.7,
+                        "num_ctx": 8192,  # Larger context window for complex prompts
+                    }
+
+                    # DeepSeek models may need different settings
+                    if "deepseek" in self.model.lower():
+                        options["num_ctx"] = 16384  # DeepSeek supports larger context
+                        console.print(f"[dim]Using extended context window (16K) for DeepSeek model[/dim]")
+
+                    try:
+                        response = self.client.chat(
+                            model=self.model,
+                            messages=[
+                                {"role": "user", "content": prompt}
+                            ],
+                            options=options,
+                            format="json"  # Force JSON output only
+                        )
+                        response_text = response['message']['content']
+                    except Exception as ollama_error:
+                        console.print(f"[red]Ollama error: {str(ollama_error)}[/red]")
+                        console.print(f"[yellow]Model: {self.model}[/yellow]")
+                        console.print(f"[yellow]Prompt length: {len(prompt)} chars[/yellow]")
+                        raise
 
                 flashcards = self._parse_response(response_text, title)
 
@@ -133,103 +194,135 @@ class FlashcardGenerator:
                 raise
 
     def _build_prompt(self, content: str, title: str, cards_per_concept: int) -> str:
-        """Build the prompt for Claude to generate flashcards."""
-        return f"""You are an expert at creating high-quality flashcards for spaced repetition learning (like Anki).
+        """Build the prompt for AI to generate flashcards."""
 
-I have content from a Notion page titled "{title}" that I want to convert into flashcards.
+        # Use different prompts for Claude vs Ollama
+        # Ollama models need direct, imperative instructions without conversation
+        if self.provider == "ollama":
+            return self._build_ollama_prompt(content, title)
+        else:
+            return self._build_claude_prompt(content, title, cards_per_concept)
 
-Your task:
-1. Identify the key concepts, facts, and ideas in the content
-2. For each important concept, create {cards_per_concept} flashcards with DIFFERENT approaches:
-   - **Recall**: Direct factual recall ("What is X?", "Define Y")
-   - **Conceptual**: Understanding and explanation ("Why does X work?", "Explain how Y relates to Z")
-   - **Application**: Practical usage ("When would you use X?", "How would you apply Y?")
-   - **Comparison**: Relationships and differences ("How does X differ from Y?", "Compare A and B")
-   - **Command**: Practical how-to with exact commands/syntax ("How do you do X?", "What's the command to Y?")
+    def _build_ollama_prompt(self, content: str, title: str) -> str:
+        """Build a direct, imperative prompt optimized for Ollama models."""
+        return f"""Generate Anki flashcards from the content below.
 
-CRITICAL Requirements:
-- Make questions clear, specific, and unambiguous
-- Answers MUST be detailed and complete - include examples whenever possible
-- **ALWAYS include code examples in answers when the content contains code**
-- **ALWAYS include concrete examples to illustrate concepts**
-- **For technical/tool content: CREATE "command" type cards with exact syntax and usage examples**
-- Vary the question types to reinforce learning from different angles
-- Focus on understanding, not just memorization
-- Avoid redundant questions
-- For code-related content: Include syntax examples, show usage patterns, demonstrate with actual code snippets
-- For command-type cards: Show the exact command/syntax, explain what it does, and include practical examples
-- For conceptual content: Provide real-world examples, analogies, or practical scenarios
+CRITICAL INSTRUCTIONS:
+1. Return ONLY a JSON array - no explanations, no chat, no extra text
+2. Create individual flashcards for EVERY code example - do not skip any
+3. Each code snippet gets its own separate flashcard
+4. Use the ACTUAL content provided below, NOT the examples in these instructions
 
-Content to process:
-{content}
-
-Return your response as a VALID JSON array. Each object should have:
-- "front": The question/prompt (plain string)
-- "back": The answer WITH EXAMPLES (use \\n for newlines, include code blocks)
-- "type": One of "recall", "conceptual", "application", "comparison", "command"
-
-CRITICAL JSON FORMATTING RULES:
-- Use \\n (backslash-n) for ALL newlines in the JSON strings
-- Use \\t (backslash-t) for indentation in code
-- Code blocks should use ```language at the start and ``` at the end
-- All special characters must be properly escaped for JSON
-
-Example format with properly formatted CODE (notice the \\n for newlines):
+JSON FORMAT (use \\n for newlines):
 [
   {{
-    "front": "How do you define a function in Python?",
-    "back": "Use the def keyword followed by function name and parameters:\\n\\n```python\\ndef greet(name):\\n    return f'Hello, {{name}}'\\n\\nresult = greet('Alice')  # Returns 'Hello, Alice!'\\n```",
-    "type": "recall"
-  }},
-  {{
-    "front": "What's the difference between append() and extend() in Python lists?",
-    "back": "append() adds a single element, extend() adds multiple elements from an iterable:\\n\\n```python\\n# append() - adds whole list as one element\\nlist1 = [1, 2]\\nlist1.append([3, 4])\\nprint(list1)  # [1, 2, [3, 4]]\\n\\n# extend() - adds each element individually\\nlist2 = [1, 2]\\nlist2.extend([3, 4])\\nprint(list2)  # [1, 2, 3, 4]\\n```",
-    "type": "comparison"
-  }},
-  {{
-    "front": "When should you use a list comprehension?",
-    "back": "Use list comprehensions when creating a new list from an existing iterable - they're more concise and often faster:\\n\\n```python\\n# Traditional loop\\nsquares = []\\nfor x in range(5):\\n    squares.append(x**2)\\n\\n# List comprehension (better)\\nsquares = [x**2 for x in range(5)]\\nprint(squares)  # [0, 1, 4, 9, 16]\\n```\\n\\nAvoid for complex logic that hurts readability.",
-    "type": "application"
-  }},
-  {{
-    "front": "How do you set the default branch name in Git during initialization?",
-    "back": "Use the git config command to set the default branch name:\\n\\n```bash\\ngit config --global init.defaultBranch main\\n```\\n\\nThis sets 'main' as the default branch name for all new repositories. You can verify with:\\n\\n```bash\\ngit config --global init.defaultBranch\\n```",
+    "front": "Question about the code/concept",
+    "back": "Answer with code example using \\n for newlines",
     "type": "command"
   }}
 ]
 
-CRITICAL:
-- ALWAYS include code examples in properly formatted code blocks
-- Use \\n for newlines (not actual newlines in the JSON)
-- Show concrete examples with actual syntax
-- Demonstrate output/results when helpful
+Example of correct output for C++ code:
+[
+  {{
+    "front": "What is the syntax for auto type deduction with integers in C++?",
+    "back": "```cpp\\nauto x = 42; // compiler deduces int\\n```",
+    "type": "command"
+  }},
+  {{
+    "front": "How does auto deduce double types in C++?",
+    "back": "```cpp\\nauto y = 3.14; // compiler deduces double\\n```",
+    "type": "command"
+  }}
+]
 
-Return ONLY valid JSON with escaped newlines, no other text."""
+CONTENT TO PROCESS (from "{title}"):
+{content}
+
+RETURN ONLY THE JSON ARRAY - START WITH [ AND END WITH ]"""
+
+    def _build_claude_prompt(self, content: str, title: str, cards_per_concept: int) -> str:
+        """Build quality-focused prompt for Claude — capped at 8 cards per section."""
+        return f"""You are an expert at creating high-quality flashcards for spaced repetition learning (like Anki).
+
+I have content from a Notion page titled "{title}" that I want to convert into flashcards.
+
+Generate AT MOST 8 cards for this section. Prioritise the most important concepts — quality over quantity. If the section is short or simple, generate fewer cards rather than padding.
+
+For important concepts, use DIFFERENT question approaches:
+   - **Recall**: Direct factual recall ("What is X?", "Define Y")
+   - **Conceptual**: Understanding and explanation ("Why does X work?", "Explain how Y relates to Z")
+   - **Application**: Practical usage ("When would you use X?", "How would you apply Y?")
+   - **Comparison**: Relationships and differences ("How does X differ from Y?", "Compare A and B")
+   - **Command**: Practical how-to with exact commands/syntax ("How do you do X?", "What's the syntax for Y?")
+
+Requirements:
+- Make questions clear, specific, and unambiguous
+- Answers must be detailed and include code examples where the content contains code
+- For code-heavy content, create "command" type cards with exact syntax
+- Vary question types to reinforce learning from different angles
+- Avoid redundant or near-duplicate questions
+
+Content to process:
+{content}
+
+Return your response as a VALID JSON array. Each object must have:
+- "front": The question/prompt (plain string)
+- "back": The answer with examples (use \\n for newlines, include code blocks)
+- "type": One of "recall", "conceptual", "application", "comparison", "command"
+
+CRITICAL JSON FORMATTING RULES:
+- Use \\n (backslash-n) for ALL newlines in JSON strings
+- Code blocks use ```language ... ``` syntax
+- All special characters must be properly escaped
+
+Example:
+[
+  {{
+    "front": "How do you define a function in Python?",
+    "back": "Use the def keyword:\\n\\n```python\\ndef greet(name):\\n    return f'Hello, {{name}}'\\n```",
+    "type": "recall"
+  }}
+]
+
+Return ONLY valid JSON, no other text."""
 
     def _parse_response(self, response: str, title: str) -> List[Flashcard]:
-        """Parse Claude's response into Flashcard objects."""
+        """Parse AI response into Flashcard objects."""
         try:
+            # Save raw response for debugging
+            try:
+                with open("debug_response.json", "w", encoding="utf-8") as f:
+                    f.write(response)
+                console.print(f"[dim]Debug: Saved raw response to debug_response.json ({len(response)} chars)[/dim]")
+            except Exception as e:
+                console.print(f"[dim]Warning: Could not save debug file: {e}[/dim]")
+
             # Find JSON in the response
             response = response.strip()
 
-            # Remove any leading text before the JSON array
-            # Sometimes Claude adds explanatory text like "Here is the JSON array..."
-            if not response.startswith('['):
-                # Find the first '[' character
-                json_start = response.find('[')
-                if json_start != -1:
-                    response = response[json_start:]
-                else:
-                    raise ValueError("No JSON array found in response")
+            # Show preview of response for debugging
+            preview = response[:200].replace('\n', ' ')
+            console.print(f"[dim]Response preview: {preview}...[/dim]")
 
-            # Remove markdown code blocks if present
+            # Strip markdown code fences before searching for JSON
             if response.startswith("```"):
                 lines = response.split("\n")
-                # Remove first and last lines (```)
                 response = "\n".join(lines[1:-1])
-                # Remove 'json' if it's the language identifier
                 if response.startswith("json"):
                     response = response[4:].strip()
+                response = response.rstrip().rstrip("`").strip()
+
+            # Remove any leading text before the JSON array
+            if not response.startswith('['):
+                json_start = response.find('[')
+                if json_start != -1:
+                    console.print(f"[dim]Found JSON starting at position {json_start}[/dim]")
+                    response = response[json_start:]
+                else:
+                    console.print(f"[yellow]No '[' found in response. First 500 chars:[/yellow]")
+                    console.print(f"[yellow]{response[:500]}[/yellow]")
+                    raise ValueError("No JSON array found in response")
 
             # Check if response looks truncated (doesn't end with ])
             if not response.rstrip().endswith(']'):
@@ -252,8 +345,9 @@ Return ONLY valid JSON with escaped newlines, no other text."""
                 card_type = item.get("type", "recall")
 
                 if front and back:
-                    tags = [title, card_type]
-                    flashcards.append(Flashcard(front, back, tags))
+                    # Tags are overwritten by generate_flashcards_from_sections
+                    # with proper hierarchy tags from Notion page ancestry
+                    flashcards.append(Flashcard(front, back, []))
 
             return flashcards
 

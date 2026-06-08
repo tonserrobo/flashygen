@@ -58,10 +58,15 @@ class NotionPageFetcher:
             # Extract title
             title = self.extract_title(page)
 
+            # Build parent page hierarchy for tag generation
+            hierarchy = self.get_page_hierarchy(page_id)
+            console.print(f"[dim]Page hierarchy: {' > '.join(hierarchy + [title])}[/dim]")
+
             return {
                 "id": page_id,
                 "title": title,
                 "blocks": blocks,
+                "hierarchy": hierarchy,
             }
 
         except Exception as e:
@@ -100,6 +105,41 @@ class NotionPageFetcher:
             console.print(f"[yellow]Warning: Could not fetch blocks for {block_id}: {e}[/yellow]")
 
         return all_blocks
+
+    def get_page_hierarchy(self, page_id: str) -> List[str]:
+        """Walk up the parent page chain to build the hierarchy of page titles.
+
+        Returns a list of titles from top-most ancestor down to (but not including)
+        the current page. E.g. for Python > Functions > Type Hinting,
+        calling this on "Type Hinting" returns ["Python", "Functions"].
+        """
+        hierarchy = []
+        current_id = page_id
+
+        while True:
+            try:
+                page = self.client.pages.retrieve(current_id)
+            except Exception:
+                break
+
+            parent = page.get("parent", {})
+            parent_type = parent.get("type")
+
+            if parent_type == "page_id":
+                parent_id = parent["page_id"]
+                try:
+                    parent_page = self.client.pages.retrieve(parent_id)
+                    parent_title = self.extract_title(parent_page)
+                    hierarchy.append(parent_title)
+                    current_id = parent_id
+                except Exception:
+                    break
+            else:
+                # Reached workspace or database root — stop
+                break
+
+        hierarchy.reverse()
+        return hierarchy
 
     def extract_title(self, page: Dict[str, Any]) -> str:
         """Extract title from page metadata."""

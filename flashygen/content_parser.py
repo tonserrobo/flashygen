@@ -233,3 +233,55 @@ class NotionContentParser:
             })
 
         return merged
+
+    def split_large_sections(self, sections: List[Dict[str, str]], max_section_size: int = 2500) -> List[Dict[str, str]]:
+        """Split large sections into smaller chunks to avoid token limit issues.
+
+        Args:
+            sections: List of sections to potentially split
+            max_section_size: Maximum character count per section (roughly 600-800 tokens)
+
+        Returns:
+            Sections with large ones split into smaller chunks
+        """
+        result = []
+
+        for section in sections:
+            heading = section.get('heading', 'Section')
+            content = section.get('content', '')
+
+            # If section is small enough, keep as-is
+            if len(content) <= max_section_size:
+                result.append(section)
+                continue
+
+            # Split large section into chunks
+            lines = content.split('\n')
+            current_chunk = []
+            current_size = 0
+            chunk_num = 1
+
+            for line in lines:
+                line_size = len(line) + 1  # +1 for newline
+
+                # If adding this line would exceed limit and we have content, save chunk
+                if current_size + line_size > max_section_size and current_chunk:
+                    result.append({
+                        'heading': f"{heading} (part {chunk_num})",
+                        'content': '\n'.join(current_chunk)
+                    })
+                    current_chunk = [line]
+                    current_size = line_size
+                    chunk_num += 1
+                else:
+                    current_chunk.append(line)
+                    current_size += line_size
+
+            # Add remaining content
+            if current_chunk:
+                result.append({
+                    'heading': f"{heading} (part {chunk_num})" if chunk_num > 1 else heading,
+                    'content': '\n'.join(current_chunk)
+                })
+
+        return result
