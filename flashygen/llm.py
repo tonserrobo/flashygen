@@ -137,38 +137,50 @@ class OllamaClient:
 
 
 def _try_parse_array(text: str) -> list[Any] | None:
+    """Try to parse text as a JSON array. Returns None on failure."""
     try:
         result = json.loads(text)
         if isinstance(result, list):
             return result
+        # Single object — model forgot the outer brackets; wrap it
+        if isinstance(result, dict):
+            return [result]
     except json.JSONDecodeError:
         pass
     return None
 
 
 def _extract_json_array(text: str) -> list[Any]:
-    """Extract a JSON array from LLM output, tolerant of code-fence wrapping
-    and leading/trailing prose."""
+    """Extract a JSON array from LLM output.
+
+    Handles:
+    - Proper arrays: [{...}, {...}]
+    - Single object without brackets: {...}  (model under-produces)
+    - Markdown code fences: ```json [...] ```
+    - Leading/trailing prose before the JSON
+    - Truncated arrays: recover up to the last complete object
+    """
     stripped = text.strip()
 
+    # 1. Direct parse — covers both arrays and single-object responses
     direct = _try_parse_array(stripped)
     if direct is not None:
         return direct
 
-    # Strip markdown code fences
-    fenced = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", stripped, re.DOTALL)
+    # 2. Fenced code block containing array or object
+    fenced = re.search(r"```(?:json)?\s*(\[.*?\]|\{.*?\})\s*```", stripped, re.DOTALL)
     if fenced:
         result = _try_parse_array(fenced.group(1))
         if result is not None:
             return result
 
-    # Find first [ ... ] span
+    # 3. Find first [...] span (array in surrounding prose)
     bracket = re.search(r"\[.*\]", stripped, re.DOTALL)
     if bracket:
         result = _try_parse_array(bracket.group(0))
         if result is not None:
             return result
-        # Last-ditch: truncation recovery — close at last complete object
+        # Truncation recovery — close at last complete object
         raw = bracket.group(0)
         last_obj = raw.rfind("}")
         if last_obj != -1:
@@ -176,5 +188,12 @@ def _extract_json_array(text: str) -> list[Any]:
             result = _try_parse_array(recovered)
             if result is not None:
                 return result
+
+    # 4. Find first {...} span (single object in surrounding prose)
+    brace = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if brace:
+        result = _try_parse_array(brace.group(0))
+        if result is not None:
+            return result
 
     raise ValueError(f"No JSON array found in LLM output. First 300 chars: {text[:300]}")
