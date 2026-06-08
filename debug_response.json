@@ -1,3 +1,93 @@
 ```json
+<<<<<<< HEAD
 [{"front": "Q?", "back": "A", "type": "recall"}]
+=======
+[
+  {
+    "front": "What is the syntax for using map() with a lambda function to square numbers from 0-9?",
+    "back": "Use map() with lambda to apply a function to each element:\n\n```python\nresult = list(map(lambda x: x ** 2, range(10)))\nprint(result)  # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]\n```\n\nThe lambda function takes each number x and returns x squared. map() returns an iterator, so wrap it with list() to get a list.",
+    "type": "command"
+  },
+  {
+    "front": "How does the map() function work with lambda functions?",
+    "back": "map() takes a function and an iterable, applying the function to each element and returning an iterator:\n\n```python\n# map(function, iterable) -> iterator\nresult = map(lambda x: x ** 2, range(10))\n```\n\nThe lambda function (anonymous function) is called for each element. In this case, lambda x: x ** 2 creates a function that squares its input. The result must be converted to a list with list() to view all values.",
+    "type": "conceptual"
+  },
+  {
+    "front": "When would you use map() with lambda instead of a loop?",
+    "back": "Use map() with lambda for functional programming style and cleaner code when applying a simple transformation to each element:\n\n```python\n# Functional approach with map\nresult = list(map(lambda x: x ** 2, range(10)))\n\n# Traditional loop approach\nresult = []\nfor x in range(10):\n    result.append(x ** 2)\n```\n\nmap() is more declarative and works well with higher-order functions, but list comprehensions are often more readable in Python.",
+    "type": "application"
+  },
+  {
+    "front": "What is the syntax for creating a list using list comprehension to square numbers from 0-9?",
+    "back": "Use square brackets with the transformation expression inside:\n\n```python\nresult = [x ** 2 for x in range(10)]\nprint(result)  # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]\n```\n\nThe syntax is [expression for variable in iterable]. This is equivalent to the map() approach but is generally considered more Pythonic and readable.",
+    "type": "command"
+  },
+  {
+    "front": "Why is list comprehension often more readable than map() with lambda?",
+    "back": "List comprehension reads more naturally in English (\"for each x in range, give me x squared\"):\n\n```python\n# List comprehension - reads naturally\nresult = [x ** 2 for x in range(10)]\n\n# map() with lambda - more abstract\nresult = list(map(lambda x: x ** 2, range(10)))\n```\n\nList comprehension is more explicit about what's happening and doesn't require understanding lambda functions. Most Python developers find it easier to understand at a glance.",
+    "type": "conceptual"
+  },
+  {
+    "front": "How does list comprehension differ from map() with lambda?",
+    "back": "Both produce the same result but have different approaches:\n\n```python\n# map() - functional programming style\nresult = list(map(lambda x: x ** 2, range(10)))\n\n# List comprehension - Pythonic declarative style\nresult = [x ** 2 for x in range(10)]\n```\n\nmap() requires converting the iterator to a list. List comprehension directly creates a list. List comprehension allows filters easily: [x ** 2 for x in range(10) if x % 2 == 0]. In Python, list comprehension is generally preferred.",
+    "type": "comparison"
+  },
+  {
+    "front": "What is the syntax for creating a generator expression to square numbers from 0-9?",
+    "back": "Use parentheses instead of square brackets:\n\n```python\nresult = (x ** 2 for x in range(10))\nprint(result)  # <generator object <genexpr> at 0x...>\n\n# To see values, iterate or convert to list\nfor value in result:\n    print(value)\n# or\nvalues_list = list(result)\n```\n\nGenerator expressions use the same syntax as list comprehensions but with parentheses instead of brackets.",
+    "type": "command"
+  },
+  {
+    "front": "How does a generator expression differ from a list comprehension?",
+    "back": "Generator expressions are lazy and memory-efficient, while list comprehensions create the entire list in memory:\n\n```python\n# List comprehension - creates all 10 items immediately\nlist_result = [x ** 2 for x in range(10)]  # ~200 bytes\n\n# Generator expression - creates items on-demand\ngen_result = (x ** 2 for x in range(10))  # Very small\n\n# Generator yields one value at a time\nfor value in gen_result:\n    print(value)  # Computed when accessed\n```\n\nGenerators are ideal for large datasets or when you don't need all values at once.",
+    "type": "comparison"
+  },
+  {
+    "front": "When should you use a generator expression instead of a list comprehension?",
+    "back": "Use generator expressions when:\n1. Working with large datasets (memory efficiency)\n2. You only need to iterate once\n3. You don't need random access\n4. The computation is expensive and you may not use all values\n\n```python\n# Good use case for generator - large range\ngen = (x ** 2 for x in range(1000000))\n\n# Good use case for list - small data needing multiple iterations\nlist_squares = [x ** 2 for x in range(10)]\nprint(sum(list_squares))    # First iteration\nprint(max(list_squares))    # Second iteration\n```\n\nFor small datasets or multiple iterations, list comprehensions are usually better.",
+    "type": "application"
+  },
+  {
+    "front": "What is the relationship between map(), list comprehensions, and generator expressions in Python?",
+    "back": "All three are functional programming tools that transform iterables:\n\n```python\n# 1. map() - functional style, returns iterator\nresult1 = list(map(lambda x: x ** 2, range(10)))\n\n# 2. List comprehension - Pythonic declarative, returns list\nresult2 = [x ** 2 for x in range(10)]\n\n# 3. Generator expression - lazy evaluation, returns iterator\nresult3 = (x ** 2 for x in range(10))\n\nprint(result1)  # [0, 1, 4, 9, 16, ...]\nprint(result2)  # [0, 1, 4, 9, 16, ...]\nprint(result3)  # <generator object at 0x...>\n```\n\nAll produce equivalent results; choose based on readability and memory needs.",
+    "type": "conceptual"
+  },
+  {
+    "front": "What is the memory difference between list comprehension and generator expression?",
+    "back": "List comprehensions store all values in memory; generator expressions compute values on-demand:\n\n```python\nimport sys\n\n# List comprehension - stores all 10000 items\nlist_comp = [x ** 2 for x in range(10000)]\nprint(sys.getsizeof(list_comp))  # ~87,032 bytes\n\n# Generator expression - minimal memory\ngen_exp = (x ** 2 for x in range(10000))\nprint(sys.getsizeof(gen_exp))    # ~128 bytes\n```\n\nFor large ranges, generator expressions use dramatically less memory because they don't store intermediate results.",
+    "type": "application"
+  },
+  {
+    "front": "How do you convert a generator expression to a list?",
+    "back": "Use the list() constructor to convert the generator to a list:\n\n```python\n# Generator expression\ngen = (x ** 2 for x in range(10))\n\n# Convert to list\nresult = list(gen)\nprint(result)  # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]\n\n# Note: After converting, the generator is exhausted\n# Iterating again produces nothing\nfor value in gen:\n    print(value)  # Prints nothing\n```",
+    "type": "command"
+  },
+  {
+    "front": "What is a lambda function and when is it useful?",
+    "back": "A lambda function is an anonymous function defined with the lambda keyword. Useful for short, simple operations:\n\n```python\n# Lambda function syntax: lambda arguments: expression\nsquare = lambda x: x ** 2\nprint(square(5))  # 25\n\n# Used with map()\nresult = list(map(lambda x: x ** 2, range(5)))\nprint(result)  # [0, 1, 4, 9, 16]\n\n# Used with sorted()\ndata = [(1, 'b'), (2, 'a')]\nsorted_data = sorted(data, key=lambda x: x[1])\nprint(sorted_data)  # [(2, 'a'), (1, 'b')]\n```\n\nLambdas are best for simple expressions; use def for complex functions.",
+    "type": "conceptual"
+  },
+  {
+    "front": "Compare map() with lambda to a regular function with map()",
+    "back": "Both work with map(), but lambda is more concise for simple operations:\n\n```python\n# Using lambda with map()\nresult1 = list(map(lambda x: x ** 2, range(5)))\n\n# Using regular function with map()\ndef square(x):\n    return x ** 2\n\nresult2 = list(map(square, range(5)))\n\nprint(result1)  # [0, 1, 4, 9, 16]\nprint(result2)  # [0, 1, 4, 9, 16]\n```\n\nBoth produce identical results. Lambda is shorter but regular functions are better for complex logic or reuse.",
+    "type": "comparison"
+  },
+  {
+    "front": "What does range(10) produce?",
+    "back": "range(10) produces an iterator of integers from 0 to 9 (10 values total):\n\n```python\nprint(list(range(10)))  # [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n\n# Using in iteration\nfor x in range(10):\n    print(x)  # Prints 0 through 9\n```\n\nrange() is commonly used with map(), list comprehensions, and generator expressions to apply transformations to a sequence of numbers.",
+    "type": "recall"
+  },
+  {
+    "front": "What does the ** operator do in Python?",
+    "back": "The ** operator performs exponentiation (raising to a power):\n\n```python\n# x ** y means x to the power of y\nprint(2 ** 3)    # 8 (2 * 2 * 2)\nprint(5 ** 2)    # 25 (5 * 5)\nprint(10 ** 0)   # 1\nprint(2 ** -1)   # 0.5\n```\n\nIn the context of the examples, x ** 2 squares each number.",
+    "type": "recall"
+  },
+  {
+    "front": "What is a higher-order function?",
+    "back": "A higher-order function is a function that takes another function as an argument or returns a function:\n\n```python\n# map() is a higher-order function - it takes a function as argument\nresult = list(map(lambda x: x ** 2, range(10)))\n\n# sorted() with key parameter is also higher-order\ndata = [3, 1, 4, 1, 5]\nsorted_data = sorted(data, key=lambda x: -x)  # sort descending\n\n# Function that returns a function\ndef multiplier(n):\n    return lambda x: x * n\n\ntimes_3 = multiplier(3)\nprint(times_3(10))  # 30\n```\n\nmap(), filter(), reduce(), sorted() with key are common examples in Python.",
+    "type": "conceptual"
+  }
+]
+>>>>>>> 1d335b05a28935cec091d58cf21c282a5f878446
 ```
