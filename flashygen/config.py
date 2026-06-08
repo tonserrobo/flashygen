@@ -23,7 +23,7 @@ class Config:
 
         # Ollama configuration
         self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.ollama_model = os.getenv("OLLAMA_MODEL", "phi3")
+        self.ollama_model = os.getenv("FG_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL", "gemma3:4b")
 
         # Set model based on provider
         if self.provider == "claude":
@@ -31,12 +31,7 @@ class Config:
         else:
             self.model = self.ollama_model
 
-        # Adjust cards_per_concept based on model
-        # Haiku has lower max_tokens (4096) so we need fewer cards
-        if "haiku" in self.model.lower():
-            self.cards_per_concept = 2
-        else:
-            self.cards_per_concept = 5
+        self.cards_per_concept = 3
 
     def validate(self) -> tuple[bool, str]:
         """Validate that required configuration is present."""

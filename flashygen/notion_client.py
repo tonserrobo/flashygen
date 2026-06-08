@@ -20,24 +20,23 @@ class NotionPageFetcher:
         Supports formats:
         - https://www.notion.so/Page-Title-abc123def456
         - https://www.notion.so/workspace/Page-Title-abc123def456
+        - https://app.notion.com/p/Page-Title-abc123def456
         - abc123def456 (direct ID)
         """
-        if "notion.so" in url:
-            # Extract the last part after the last slash
-            page_part = url.rstrip('/').split('/')[-1]
-            # The ID is either the whole part or after the last hyphen
+        if "notion.so" in url or "notion.com" in url:
+            # Strip query string first, then grab the last path segment
+            path = url.split('?')[0].rstrip('/')
+            page_part = path.split('/')[-1]
+            # The slug is Title-HEXID — the ID is the last hyphen-delimited token
             if '-' in page_part:
                 page_id = page_part.split('-')[-1]
             else:
                 page_id = page_part
         else:
-            page_id = url
+            # Assume bare ID (possibly with hyphens in UUID format)
+            page_id = url.split('?')[0]
 
-        # Remove any query parameters
-        if '?' in page_id:
-            page_id = page_id.split('?')[0]
-
-        # Remove hyphens from the ID
+        # Remove hyphens (UUID format → raw 32-char hex)
         page_id = page_id.replace('-', '')
 
         return page_id
@@ -46,7 +45,7 @@ class NotionPageFetcher:
         """Fetch page content including title and blocks."""
         page_id = self.extract_page_id(page_url)
 
-        console.print(f"[cyan]Fetching page: {page_id}[/cyan]")
+        console.print(f"[cyan]Fetching page ID: {page_id}[/cyan]")
 
         try:
             # Get page metadata (includes title)
