@@ -88,7 +88,7 @@ def generate(
             console.print(f"[dim]Merged down to {len(sections)} section(s)[/dim]")
 
         # Split large sections so each fits comfortably in a small model's context
-        sections = parser.split_large_sections(sections, max_section_size=600)
+        sections = parser.split_large_sections(sections, max_section_size=1200)
         console.print(f"[dim]After size-capping: {len(sections)} section(s)[/dim]")
 
         # Step 3: Generate flashcards with AI

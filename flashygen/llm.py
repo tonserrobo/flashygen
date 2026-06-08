@@ -12,6 +12,7 @@ shared with the other pipelines without duplicate config.
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,10 +25,10 @@ def _envvar(name: str, default: str) -> str:
 
 @dataclass
 class OllamaConfig:
-    model: str = "huihui_ai/gemma3-abliterated:latest"
+    model: str = "huihui_ai/gemma-4-abliterated:e4b"
     base_url: str = "http://localhost:11434"
     temperature: float = 0.4
-    max_tokens: int = 2048
+    max_tokens: int = 3072
     timeout: int = 300
 
     @classmethod
@@ -44,7 +45,19 @@ class OllamaClient:
     def __init__(self, config: OllamaConfig | None = None) -> None:
         self.config = config or OllamaConfig.from_env()
 
-    def generate(self, prompt: str, max_tokens: int | None = None, format: str | None = None) -> str:
+    def generate(
+        self,
+        prompt: str,
+        max_tokens: int | None = None,
+        format: str | None = None,
+        _server_retries: int = 2,
+    ) -> str:
+        """POST to /api/generate with automatic retry on transient 500 errors.
+
+        Large models that partially offload to CPU can return 500 when the GPU
+        scheduler is under pressure. A short sleep between retries usually lets
+        Ollama recover.
+        """
         url = f"{self.config.base_url}/api/generate"
         payload: dict[str, Any] = {
             "model": self.config.model,
@@ -57,25 +70,42 @@ class OllamaClient:
         }
         if format:
             payload["format"] = format
-        try:
-            resp = requests.post(url, json=payload, timeout=self.config.timeout)
-        except requests.ConnectionError as e:
-            raise RuntimeError(
-                f"Could not reach Ollama at {self.config.base_url}. "
-                "Is Ollama running? Start it with: ollama start\n"
-                "Override URL with FG_OLLAMA_URL or CG_OLLAMA_URL."
-            ) from e
-        if resp.status_code == 404:
-            body = resp.json() if resp.content else {}
-            detail = body.get("error", resp.text[:200])
-            raise RuntimeError(
-                f"Ollama 404: {detail}\n"
-                f"Model '{self.config.model}' may not be pulled. "
-                f"Run: ollama pull {self.config.model}\n"
-                "Or set FG_OLLAMA_MODEL to a model you have (ollama list)."
-            )
-        resp.raise_for_status()
-        return resp.json().get("response", "")
+
+        last_err: Exception | None = None
+        for attempt in range(_server_retries + 1):
+            try:
+                resp = requests.post(url, json=payload, timeout=self.config.timeout)
+            except requests.ConnectionError as e:
+                raise RuntimeError(
+                    f"Could not reach Ollama at {self.config.base_url}. "
+                    "Is Ollama running? Start it with: ollama start\n"
+                    "Override URL with FG_OLLAMA_URL or CG_OLLAMA_URL."
+                ) from e
+
+            if resp.status_code == 404:
+                body = resp.json() if resp.content else {}
+                detail = body.get("error", resp.text[:200])
+                raise RuntimeError(
+                    f"Ollama 404: {detail}\n"
+                    f"Model '{self.config.model}' may not be pulled. "
+                    f"Run: ollama pull {self.config.model}\n"
+                    "Or set FG_OLLAMA_MODEL to a model you have (ollama list)."
+                )
+
+            if resp.status_code == 500 and attempt < _server_retries:
+                body = resp.json() if resp.content else {}
+                detail = body.get("error", "unknown server error")
+                wait = 4 * (attempt + 1)
+                print(f"  ! Ollama 500 (attempt {attempt + 1}): {detail} — retrying in {wait}s")
+                time.sleep(wait)
+                last_err = requests.HTTPError(response=resp)
+                continue
+
+            resp.raise_for_status()
+            return resp.json().get("response", "")
+
+        assert last_err is not None
+        raise last_err
 
     def generate_json_array(self, prompt: str, max_tokens: int | None = None, retries: int = 1) -> list[Any]:
         """Generate a JSON array with retry-on-parse-failure.

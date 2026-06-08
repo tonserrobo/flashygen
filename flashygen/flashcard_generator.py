@@ -12,7 +12,7 @@ from flashygen.llm import OllamaClient, OllamaConfig
 
 console = Console()
 
-_CHUNK_MAX_CHARS = 800
+_CHUNK_MAX_CHARS = 1200
 
 
 class Flashcard:
@@ -202,22 +202,30 @@ def _split_into_chunks(content: str, max_chars: int = 800) -> list[str]:
 
 
 def _build_ollama_prompt(content: str, title: str) -> str:
-    return f"""Generate Anki flashcards from the content below.
+    return f"""You are creating Anki flashcards for a student studying "{title}".
 
-INSTRUCTIONS:
-1. Return ONLY a JSON array — no explanations, no chat, no extra text.
-2. Create one flashcard per distinct concept, command, or code example.
-3. Keep answers concise (1-3 lines). Use \\n for newlines inside strings.
+OUTPUT: a JSON array only — no prose, no markdown fences, no explanation.
 
-FORMAT:
+RULES:
+- Generate 3 to 6 cards from the content below.
+- Every distinct command, error, setting, or code snippet must get its own card.
+- Card types:
+    "recall"      — definition or fact ("What is X?")
+    "command"     — exact syntax or step ("How do you X?" / back includes full code/command)
+    "conceptual"  — reasoning or why ("Why does X happen?")
+    "troubleshoot"— problem → solution ("Error: X" → "Fix: Y")
+- For "command" cards the back MUST include the full command or code block.
+- Use \\n for newlines inside JSON strings.
+
+SCHEMA:
 [
-  {{"front": "Question?", "back": "Answer", "type": "recall|command|conceptual"}}
+  {{"front": "Question?", "back": "Full answer with code if relevant.", "type": "recall|command|conceptual|troubleshoot"}}
 ]
 
-CONTENT (from "{title}"):
+CONTENT:
 {content}
 
-RETURN ONLY THE JSON ARRAY — START WITH [ AND END WITH ]"""
+Return ONLY the JSON array."""
 
 
 def _build_claude_prompt(content: str, title: str, cards_per_concept: int) -> str:
