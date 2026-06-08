@@ -24,7 +24,7 @@ def _envvar(name: str, default: str) -> str:
 
 @dataclass
 class OllamaConfig:
-    model: str = "gemma3:4b"
+    model: str = "huihui_ai/gemma3-abliterated:latest"
     base_url: str = "http://localhost:11434"
     temperature: float = 0.4
     max_tokens: int = 2048
@@ -62,8 +62,18 @@ class OllamaClient:
         except requests.ConnectionError as e:
             raise RuntimeError(
                 f"Could not reach Ollama at {self.config.base_url}. "
-                "Is Ollama running? Override with FG_OLLAMA_URL or CG_OLLAMA_URL."
+                "Is Ollama running? Start it with: ollama start\n"
+                "Override URL with FG_OLLAMA_URL or CG_OLLAMA_URL."
             ) from e
+        if resp.status_code == 404:
+            body = resp.json() if resp.content else {}
+            detail = body.get("error", resp.text[:200])
+            raise RuntimeError(
+                f"Ollama 404: {detail}\n"
+                f"Model '{self.config.model}' may not be pulled. "
+                f"Run: ollama pull {self.config.model}\n"
+                "Or set FG_OLLAMA_MODEL to a model you have (ollama list)."
+            )
         resp.raise_for_status()
         return resp.json().get("response", "")
 

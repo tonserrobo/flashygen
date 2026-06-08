@@ -23,7 +23,7 @@ class Config:
 
         # Ollama configuration
         self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.ollama_model = os.getenv("FG_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL", "gemma3:4b")
+        self.ollama_model = os.getenv("FG_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL", "huihui_ai/gemma3-abliterated:latest")
 
         # Set model based on provider
         if self.provider == "claude":

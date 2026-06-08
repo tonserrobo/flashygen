@@ -173,26 +173,31 @@ class FlashcardGenerator:
 # ------------------------------------------------------------------ #
 
 def _split_into_chunks(content: str, max_chars: int = 800) -> list[str]:
-    """Split content at paragraph boundaries, grouping up to max_chars per chunk."""
-    paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
-    if not paragraphs:
+    """Split content at line boundaries, grouping lines up to max_chars per chunk.
+
+    The parser emits single-newline-separated lines (not double), so we split
+    on '\n' and re-group rather than on paragraph boundaries.
+    """
+    lines = [l for l in content.split("\n") if l.strip()]
+    if not lines:
         return [content] if content.strip() else []
 
     chunks: list[str] = []
     current: list[str] = []
     current_size = 0
 
-    for para in paragraphs:
-        if current_size + len(para) > max_chars and current:
-            chunks.append("\n\n".join(current))
-            current = [para]
-            current_size = len(para)
+    for line in lines:
+        line_len = len(line) + 1  # +1 for the newline
+        if current_size + line_len > max_chars and current:
+            chunks.append("\n".join(current))
+            current = [line]
+            current_size = line_len
         else:
-            current.append(para)
-            current_size += len(para)
+            current.append(line)
+            current_size += line_len
 
     if current:
-        chunks.append("\n\n".join(current))
+        chunks.append("\n".join(current))
     return chunks
 
 

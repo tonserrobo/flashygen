@@ -87,6 +87,10 @@ def generate(
             sections = parser.merge_small_sections(sections, min_content_size=800, max_sections=10)
             console.print(f"[dim]Merged down to {len(sections)} section(s)[/dim]")
 
+        # Split large sections so each fits comfortably in a small model's context
+        sections = parser.split_large_sections(sections, max_section_size=600)
+        console.print(f"[dim]After size-capping: {len(sections)} section(s)[/dim]")
+
         # Step 3: Generate flashcards with AI
         provider_display = "Claude" if config.provider == "claude" else "Ollama"
         console.print(f"\n[bold]Step 3:[/bold] Generating flashcards with {provider_display} (target: {cards_per_concept} per concept)...")
