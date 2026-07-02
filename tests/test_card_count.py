@@ -1,9 +1,8 @@
 """Tests for card count constraints."""
 import ast
 import pathlib
-import pytest
 
-from flashygen.flashcard_generator import FlashcardGenerator
+from flashygen.flashcard_generator import _build_claude_prompt, _build_ollama_prompt
 
 def test_max_sections_is_ten():
     """main.py must cap sections at 10 to keep total cards ≤150."""
@@ -21,15 +20,13 @@ def test_max_sections_is_ten():
 
 def test_claude_prompt_has_card_cap():
     """Claude prompt must contain the AT MOST 8 cards cap."""
-    gen = FlashcardGenerator(api_key="dummy", model="claude-haiku-4-5-20251001", provider="claude")
-    prompt = gen._build_claude_prompt("some content", "Test Page", 3)
+    prompt = _build_claude_prompt("some content", "Test Page", 3)
     assert "AT MOST 8" in prompt, "Prompt must include hard cap of AT MOST 8 cards per section"
     assert "MAXIMUM GRANULARITY" not in prompt, "Prompt must not instruct maximum granularity"
     assert "More cards is better" not in prompt, "Prompt must not encourage card inflation"
 
-def test_ollama_prompt_unaffected():
-    """Ollama prompt is separate and should not be changed."""
-    pytest.importorskip("ollama", minversion=None)
-    gen = FlashcardGenerator(api_key=None, model="phi3", provider="ollama")
-    prompt = gen._build_ollama_prompt("some content", "Test Page")
-    assert prompt.startswith("Generate Anki flashcards")
+def test_ollama_prompt_generates_json_array():
+    """Ollama prompt must demand a JSON-array-only response."""
+    prompt = _build_ollama_prompt("some content", "Test Page")
+    assert "JSON array" in prompt
+    assert "some content" in prompt

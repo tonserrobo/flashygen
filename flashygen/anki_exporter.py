@@ -291,9 +291,10 @@ class AnkiExporter:
             )
             deck.add_note(note)
 
-        # Determine output path
+        # Determine output path (default: decks/ so artifacts stay out of the repo root)
         if output_path is None:
-            output_path = f"{deck_name.replace(' ', '_')}.apkg"
+            Path("decks").mkdir(exist_ok=True)
+            output_path = str(Path("decks") / f"{deck_name.replace(' ', '_')}.apkg")
 
         # Ensure the path has .apkg extension
         if not output_path.endswith('.apkg'):
@@ -334,9 +335,11 @@ class AnkiExporter:
             code_blocks.append(html_code)
             return code_block_placeholder.format(index)
 
-        # Extract code blocks first (flexible regex - newline after language is optional)
+        # Extract code blocks first (flexible regex - newline after language is
+        # optional). Language class must cover c++, c#, objective-c++ etc. —
+        # \w+ alone truncated "c++" to "c" and leaked "++" into the code body.
         text = re.sub(
-            r'```(\w+)?\s*(.*?)\s*```',
+            r'```([\w+#.-]*)[ \t]*\n?(.*?)\s*```',
             store_code_block,
             text,
             flags=re.DOTALL
