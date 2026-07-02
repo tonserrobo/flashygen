@@ -3,11 +3,61 @@
 from typing import Dict, List, Any
 
 
+def chunk_text(content: str, max_chars: int) -> List[str]:
+    """Group lines into chunks of ~max_chars without ever splitting a ``` fence.
+
+    A fenced code block is an atomic unit and always joins the current chunk,
+    so a block stays with the prose that introduces it — a chunk may overflow
+    max_chars to guarantee that. Blank lines are dropped outside fences and
+    preserved inside them.
+    """
+    units: List[tuple] = []  # (text, is_fenced_block)
+    fence_buf = None
+    for line in content.split("\n"):
+        if fence_buf is not None:
+            fence_buf.append(line)
+            if line.lstrip().startswith("```"):
+                units.append(("\n".join(fence_buf), True))
+                fence_buf = None
+        elif line.lstrip().startswith("```"):
+            fence_buf = [line]
+        elif line.strip():
+            units.append((line, False))
+    if fence_buf is not None:  # unterminated fence — keep it whole anyway
+        units.append(("\n".join(fence_buf), True))
+
+    chunks: List[str] = []
+    current: List[str] = []
+    size = 0
+    for text, is_fence in units:
+        unit_len = len(text) + 1
+        if current and size + unit_len > max_chars and not is_fence:
+            chunks.append("\n".join(current))
+            current, size = [], 0
+        current.append(text)
+        size += unit_len
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
 class NotionContentParser:
-    """Parse Notion blocks into readable text."""
+    """Parse Notion blocks into readable text.
+
+    While parsing, code blocks and images are recorded in `self.assets` and
+    referenced in the text by [CODE n] / [FIGURE n] tokens, so downstream
+    stages can cite assets instead of reproducing them (issue #8).
+    """
+
+    def __init__(self):
+        self.assets: List[Dict[str, str]] = []
+        self.skipped_types: set = set()
 
     def parse_blocks(self, blocks: List[Dict[str, Any]], level: int = 0) -> str:
         """Parse blocks into formatted text."""
+        if level == 0:
+            self.assets = []
+            self.skipped_types = set()
         content_parts = []
 
         for block in blocks:
@@ -66,7 +116,25 @@ class NotionContentParser:
             rich_text = block["code"].get("rich_text", [])
             language = block["code"].get("language", "")
             code = self.parse_rich_text(rich_text)
-            return f"```{language}\n{code}\n```" if code else ""
+            if not code:
+                return ""
+            n = sum(1 for a in self.assets if a["kind"] == "code") + 1
+            self.assets.append(
+                {"token": f"CODE {n}", "kind": "code", "language": language or "code", "content": code}
+            )
+            return f"[CODE {n}]\n```{language}\n{code}\n```"
+
+        elif block_type == "image":
+            image = block["image"]
+            url = image.get(image.get("type", ""), {}).get("url", "")
+            if not url:
+                return ""
+            caption = self.parse_rich_text(image.get("caption", []))
+            n = sum(1 for a in self.assets if a["kind"] == "figure") + 1
+            self.assets.append(
+                {"token": f"FIGURE {n}", "kind": "figure", "url": url, "caption": caption}
+            )
+            return f"[FIGURE {n}: {caption}]" if caption else f"[FIGURE {n}]"
 
         elif block_type == "quote":
             text = self.parse_rich_text(block["quote"].get("rich_text", []))
@@ -80,10 +148,22 @@ class NotionContentParser:
                 emoji = icon.get("emoji", "") + " "
             return f"{emoji}{text}" if text else ""
 
+        elif block_type == "equation":
+            expression = block["equation"].get("expression", "")
+            return f"$${expression}$$" if expression else ""
+
+        elif block_type == "table":
+            return ""  # rows arrive as table_row children and are parsed there
+
+        elif block_type == "table_row":
+            cells = block["table_row"].get("cells", [])
+            return "| " + " | ".join(self.parse_rich_text(cell) for cell in cells) + " |"
+
         elif block_type == "divider":
             return "---"
 
-        # Add more block types as needed
+        # Unhandled type — record it so coverage gaps are visible, not silent
+        self.skipped_types.add(block_type)
         return ""
 
     def parse_rich_text(self, rich_text_array: List[Dict[str, Any]]) -> str:
@@ -94,6 +174,11 @@ class NotionContentParser:
         text_parts = []
         for text_obj in rich_text_array:
             plain_text = text_obj.get("plain_text", "")
+
+            # Inline equations: plain_text holds the LaTeX expression
+            if text_obj.get("type") == "equation" and plain_text:
+                text_parts.append(f"${plain_text}$")
+                continue
 
             # Apply basic formatting
             annotations = text_obj.get("annotations", {})
@@ -255,33 +340,12 @@ class NotionContentParser:
                 result.append(section)
                 continue
 
-            # Split large section into chunks
-            lines = content.split('\n')
-            current_chunk = []
-            current_size = 0
-            chunk_num = 1
-
-            for line in lines:
-                line_size = len(line) + 1  # +1 for newline
-
-                # If adding this line would exceed limit and we have content, save chunk
-                if current_size + line_size > max_section_size and current_chunk:
-                    result.append({
-                        'heading': f"{heading} (part {chunk_num})",
-                        'content': '\n'.join(current_chunk)
-                    })
-                    current_chunk = [line]
-                    current_size = line_size
-                    chunk_num += 1
-                else:
-                    current_chunk.append(line)
-                    current_size += line_size
-
-            # Add remaining content
-            if current_chunk:
+            # Split large section into fence-safe chunks
+            parts = chunk_text(content, max_section_size)
+            for i, part in enumerate(parts, 1):
                 result.append({
-                    'heading': f"{heading} (part {chunk_num})" if chunk_num > 1 else heading,
-                    'content': '\n'.join(current_chunk)
+                    'heading': f"{heading} (part {i})" if len(parts) > 1 else heading,
+                    'content': part
                 })
 
         return result

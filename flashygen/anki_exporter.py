@@ -1,14 +1,26 @@
 """Export flashcards to Anki deck format."""
 
-import random
+import hashlib
+import html
+import re
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional, Tuple
 import genanki
+import requests
 from rich.console import Console
 
 from .flashcard_generator import Flashcard
 
 console = Console()
+
+# Fixed model id so re-imports merge instead of duplicating. Bump when the
+# field schema changes (current: v2 — Question/Answer/Explainer).
+FLASHYGEN_MODEL_ID = 1998284002
+
+
+def _stable_id(seed: str) -> int:
+    """Deterministic 31-bit id from a string (page id or deck name)."""
+    return (1 << 30) + int(hashlib.sha1(seed.encode("utf-8")).hexdigest()[:8], 16) % (1 << 30)
 
 
 class AnkiExporter:
@@ -18,11 +30,12 @@ class AnkiExporter:
         """Initialize the Anki exporter."""
         # Create a custom model for our flashcards with styling
         self.model = genanki.Model(
-            model_id=random.randrange(1 << 30, 1 << 31),
+            model_id=FLASHYGEN_MODEL_ID,
             name='FlashyGen Basic',
             fields=[
                 {'name': 'Question'},
                 {'name': 'Answer'},
+                {'name': 'Explainer'},
             ],
             templates=[
                 {
@@ -37,6 +50,7 @@ class AnkiExporter:
                             <div class="question">{{Question}}</div>
                             <hr>
                             <div class="answer">{{Answer}}</div>
+                            {{#Explainer}}<div class="explainer">{{Explainer}}</div>{{/Explainer}}
                         </div>
                     ''',
                 },
@@ -77,6 +91,18 @@ class AnkiExporter:
                     border-radius: 12px;
                     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
                     border-left: 5px solid #10b981;
+                }
+
+                /* Explainer: context beyond the answer, shown below it */
+                .explainer {
+                    font-size: 16px;
+                    text-align: left;
+                    margin-top: 18px;
+                    padding: 15px 20px;
+                    background-color: #fffbeb;
+                    border-left: 4px solid #fbbf24;
+                    border-radius: 4px;
+                    color: #4b5563;
                 }
 
                 /* Divider line */
@@ -263,51 +289,150 @@ class AnkiExporter:
         self,
         flashcards: List[Flashcard],
         deck_name: str,
-        output_path: str = None
+        output_path: str = None,
+        assets: Optional[List[Dict[str, str]]] = None,
+        page_id: Optional[str] = None,
     ) -> str:
-        """Create an Anki deck from flashcards and save to file."""
+        """Create an Anki deck from flashcards and save to file.
+
+        `assets` is the parser's registry; [CODE n]/[FIGURE n] tokens in cards
+        are replaced with the verbatim code block or downloaded image.
+        `page_id` seeds deterministic deck/note ids so re-exports of the same
+        Notion page merge into the existing Anki deck instead of duplicating.
+        """
 
         if not flashcards:
             console.print("[yellow]No flashcards to export![/yellow]")
             return None
 
-        # Create deck
-        deck_id = random.randrange(1 << 30, 1 << 31)
-        deck = genanki.Deck(deck_id, deck_name)
+        # Determine output path first — media files live next to the deck
+        # (default: decks/ so artifacts stay out of the repo root)
+        if output_path is None:
+            Path("decks").mkdir(exist_ok=True)
+            output_path = str(Path("decks") / f"{deck_name.replace(' ', '_')}.apkg")
+        if not output_path.endswith('.apkg'):
+            output_path = f"{output_path}.apkg"
+        media_dir = Path(output_path).parent / ".media"
+
+        # Create deck — id derived from the page so updates merge on re-import
+        id_seed = page_id or deck_name
+        deck = genanki.Deck(_stable_id(id_seed), deck_name)
 
         # Add notes (flashcards) to deck
+        media_files: List[str] = []
         for flashcard in flashcards:
+            # Sanitize tags: replace spaces with hyphens (Anki doesn't allow spaces in tags)
+            sanitized_tags = [tag.replace(' ', '-') for tag in flashcard.tags]
+
+            if getattr(flashcard, "card_type", "") == "cloze":
+                note = self._build_cloze_note(flashcard, assets, sanitized_tags, id_seed)
+                if note is not None:
+                    deck.add_note(note)
+                continue
+
             # Convert markdown-like formatting to HTML
             front_html = self._format_content(flashcard.front)
             back_html = self._format_content(flashcard.back)
 
-            # Sanitize tags: replace spaces with hyphens (Anki doesn't allow spaces in tags)
-            sanitized_tags = [tag.replace(' ', '-') for tag in flashcard.tags]
+            explainer_html = self._format_content(getattr(flashcard, "explainer", ""))
+
+            # Swap [CODE n]/[FIGURE n] tokens for the real assets
+            front_html, media = self._substitute_assets(front_html, assets, media_dir)
+            media_files += [m for m in media if m not in media_files]
+            back_html, media = self._substitute_assets(back_html, assets, media_dir)
+            media_files += [m for m in media if m not in media_files]
+            explainer_html, media = self._substitute_assets(explainer_html, assets, media_dir)
+            media_files += [m for m in media if m not in media_files]
 
             note = genanki.Note(
                 model=self.model,
-                fields=[front_html, back_html],
-                tags=sanitized_tags
+                fields=[front_html, back_html, explainer_html],
+                tags=sanitized_tags,
+                # guid from (page, section, front): edits in Notion update the
+                # existing Anki card and preserve its review history
+                guid=genanki.guid_for(id_seed, getattr(flashcard, "section", ""), flashcard.front),
             )
             deck.add_note(note)
 
-        # Determine output path (default: decks/ so artifacts stay out of the repo root)
-        if output_path is None:
-            Path("decks").mkdir(exist_ok=True)
-            output_path = str(Path("decks") / f"{deck_name.replace(' ', '_')}.apkg")
-
-        # Ensure the path has .apkg extension
-        if not output_path.endswith('.apkg'):
-            output_path = f"{output_path}.apkg"
-
         # Create package and save
         package = genanki.Package(deck)
+        package.media_files = media_files
         package.write_to_file(output_path)
 
         console.print(f"[green]Successfully created Anki deck: {output_path}[/green]")
         console.print(f"[cyan]Total cards: {len(flashcards)}[/cyan]")
 
         return output_path
+
+    def _build_cloze_note(
+        self,
+        flashcard,
+        assets: Optional[List[Dict[str, str]]],
+        tags: List[str],
+        id_seed: str,
+    ) -> Optional[genanki.Note]:
+        """Build a cloze note over the verbatim registry code.
+
+        The model only chose which substrings to blank; the code itself comes
+        byte-exact from the registry with {{c1::...}} wrapped around each blank.
+        """
+        asset = next((a for a in (assets or []) if a["token"] == flashcard.code_ref), None)
+        if asset is None:
+            return None
+        code = html.escape(asset["content"])
+        for i, blank in enumerate(flashcard.blanks, 1):
+            escaped = html.escape(blank)
+            code = code.replace(escaped, f"{{{{c{i}::{escaped}}}}}", 1)
+        code = code.replace("\n", "<br>")
+        text = (
+            f'{html.escape(flashcard.front)}<br>'
+            f'<pre data-language="{asset["language"]}"><code>{code}</code></pre>'
+        )
+        return genanki.Note(
+            model=genanki.CLOZE_MODEL,
+            fields=[text, ""],
+            tags=tags,
+            guid=genanki.guid_for(id_seed, flashcard.code_ref, "|".join(flashcard.blanks)),
+        )
+
+    def _substitute_assets(
+        self,
+        html: str,
+        assets: Optional[List[Dict[str, str]]],
+        media_dir: Path,
+    ) -> Tuple[str, List[str]]:
+        """Replace [CODE n]/[FIGURE n] tokens with the verbatim registry asset.
+
+        Code becomes a <pre> block built from the registry (byte-exact, never
+        the model's retyping); figures are downloaded to media_dir at export
+        time because Notion file URLs expire (~1h) and referenced by basename.
+        Unknown tokens are left untouched (validation handles them, issue #6).
+        """
+        media: List[str] = []
+        by_token = {a["token"]: a for a in (assets or [])}
+
+        def repl(match: re.Match) -> str:
+            asset = by_token.get(f"{match.group(1)} {match.group(2)}")
+            if asset is None:
+                return match.group(0)
+            if asset["kind"] == "code":
+                code = self._highlight_code(asset["content"], asset["language"])
+                return f'<pre data-language="{asset["language"]}"><code>{code}</code></pre>'
+            ext = Path(asset["url"].split("?")[0]).suffix or ".png"
+            filename = f"fg_{match.group(2)}{ext}"
+            path = media_dir / filename
+            if not path.exists():
+                media_dir.mkdir(parents=True, exist_ok=True)
+                resp = requests.get(asset["url"], timeout=30)
+                resp.raise_for_status()
+                path.write_bytes(resp.content)
+            if str(path) not in media:
+                media.append(str(path))
+            return f'<img src="{filename}">'
+
+        # Optional ": caption" suffix tolerated — models sometimes echo it
+        html = re.sub(r"\[(CODE|FIGURE) (\d+)(?::[^\]]*)?\]", repl, html)
+        return html, media
 
     def _format_content(self, text: str) -> str:
         """Convert markdown-like formatting to HTML for Anki."""
@@ -345,6 +470,21 @@ class AnkiExporter:
             flags=re.DOTALL
         )
 
+        # Protect math spans and convert to Anki's MathJax delimiters:
+        # $$expr$$ -> \[expr\], $expr$ -> \(expr\). Placeholders keep the LaTeX
+        # (underscores, asterisks, < >) away from the markdown regexes below.
+        # ponytail: naive $-pairing, no \$ escape support — revisit if notes ever
+        # use literal dollar amounts on one line in pairs.
+        math_blocks = []
+
+        def store_math(match):
+            display, inline = match.group(1), match.group(2)
+            expr = html.escape(display if display is not None else inline)
+            math_blocks.append(f'\\[{expr}\\]' if display is not None else f'\\({expr}\\)')
+            return f"<!--MATH{len(math_blocks) - 1}-->"
+
+        text = re.sub(r'\$\$(.+?)\$\$|\$([^$\n]+?)\$', store_math, text, flags=re.DOTALL)
+
         # Convert inline code (`code`) - escape HTML inside
         def format_inline_code(match):
             code_content = html.escape(match.group(1))
@@ -363,7 +503,9 @@ class AnkiExporter:
         # Convert remaining line breaks to <br> (but not in code blocks)
         text = text.replace('\n', '<br>')
 
-        # Restore code blocks
+        # Restore math spans, then code blocks
+        for i, math_block in enumerate(math_blocks):
+            text = text.replace(f"<!--MATH{i}-->", math_block)
         for i, code_block in enumerate(code_blocks):
             text = text.replace(code_block_placeholder.format(i), code_block)
 

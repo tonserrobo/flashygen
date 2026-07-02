@@ -1,7 +1,3 @@
-```json
-<<<<<<< HEAD
-[{"front": "Q?", "back": "A", "type": "recall"}]
-=======
 [
   {
     "front": "What is the syntax for using map() with a lambda function to square numbers from 0-9?",
@@ -89,5 +85,3 @@
     "type": "conceptual"
   }
 ]
->>>>>>> 1d335b05a28935cec091d58cf21c282a5f878446
-```
