@@ -3,6 +3,30 @@
 All notable changes to FlashyGen are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## [0.2.2] - 2026-07-03
+
+Card-content fixes driven by comparing the four UE5 decks against their source Notion pages
+(issues [#20](https://github.com/tonserrobo/flashygen/issues/20)–[#23](https://github.com/tonserrobo/flashygen/issues/23)).
+
+### Fixed
+- **Cloze backfill sees the surrounding prose** (#20): the per-asset cloze call now receives
+  the sentences around the code block (fences stripped), so blanks carry the teaching point
+  instead of defaulting to API names. Code the notes present as a mistake ("does not
+  compile", naive anti-pattern) becomes a troubleshoot card ("What is wrong with this
+  code?") instead of a memorisation cloze.
+- **Diagram blocks no longer get cloze cards** (#21): mermaid/plantuml/dot/graphviz assets
+  are illustrations, not code to memorise — skipped by the backfill.
+- **Cross-section duplicate cards removed** (#22): summary/quick-reference sections restate
+  facts already carded; the per-section quality gate can't see that. A deck-level LLM pass
+  now judges duplicates, and a drop is only honored when word overlap confirms the pair is
+  related (string similarity alone can't separate real duplicates from question-template
+  overlap — measured on the 2026-07-03 decks).
+
+### Changed
+- **Tables called out in generation prompts** (#23): markdown table rows are dense fact
+  lists (an 8-row decision table yielded one card); both prompts now direct one card per
+  non-obvious row.
+
 ## [0.2.1] - 2026-07-03
 
 Coverage fixes driven by a log review of the four UE5 deck runs

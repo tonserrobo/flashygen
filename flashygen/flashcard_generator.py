@@ -152,6 +152,16 @@ class FlashcardGenerator:
                 console.print(f"[yellow]⚠[/yellow] Failed to generate cards for this section: {e}")
                 console.print("[dim]Continuing with next section...[/dim]")
 
+        # per-section _quality_gate can't see other sections; summary sections
+        # restate earlier facts, so dedupe once over the whole deck (issue #22)
+        if self.provider != "claude" and len(all_flashcards) > 1:
+            before = len(all_flashcards)
+            all_flashcards = _dedupe_cards_llm(self.ollama, all_flashcards)
+            if len(all_flashcards) < before:
+                console.print(
+                    f"[yellow]Dropped {before - len(all_flashcards)} cross-section duplicate card(s)[/yellow]"
+                )
+
         return all_flashcards
 
     def generate_flashcards(
@@ -193,7 +203,9 @@ class FlashcardGenerator:
                     asset = next((a for a in assets if a["token"] == token), None)
                     if asset is None:
                         continue
-                    cloze = _generate_code_cloze(self.ollama, asset)
+                    if asset.get("language", "").lower() in _DIAGRAM_LANGUAGES:
+                        continue  # diagrams are illustrations, not code to memorise (issue #21)
+                    cloze = _generate_code_cloze(self.ollama, asset, _asset_context(content, token))
                     if cloze:
                         all_cards.append(cloze)
                         console.print(f"[dim]  + cloze card for [{token}][/dim]")
@@ -269,6 +281,8 @@ RULES:
 - Aim for about {cards_per_concept} cards (1 to 6), one per distinct fact, command, or
   pitfall — only as many as the content genuinely supports. Never pad with trivia.
 - Every distinct command, error, setting, or code snippet must get its own card.
+- Lines starting with | are table rows — a dense list of facts. Make one card per
+  non-obvious row: the row's decision, value, or purpose is the answer.
 - Card types:
     "recall"      — definition or fact ("What is X?")
     "command"     — exact syntax or step ("How do you X?" / back includes full code/command)
@@ -312,6 +326,7 @@ Requirements:
 - If the content contains [CODE n] or [FIGURE n] markers, cite the bare token in the back
   of any card about that asset instead of reproducing it — it is substituted later
 - No redundant or near-duplicate questions
+- Lines starting with | are table rows — dense fact lists; card the non-obvious rows
 
 Content:
 {content}
@@ -320,25 +335,50 @@ Return ONLY a valid JSON array. Each object: "front", "back", "type", and option
 "explainer" (1-3 sentences of context beyond the answer, or ""). No other text."""
 
 
+_DIAGRAM_LANGUAGES = {"mermaid", "plantuml", "dot", "graphviz"}
+
 _CLOZE_PROMPT = """From this {language} code, pick 1 to 3 short substrings worth memorising —
 a specifier, macro name, function name, or key argument. Copy each EXACTLY as it
 appears in the code. Never pick whole lines.
 
+CONTEXT (the notes surrounding this code):
+{context}
+
 CODE:
 {code}
 
-Return ONLY JSON: [{{"blanks": ["exact substring"], "hint": "one line saying what the code does"}}]"""
+Prefer blanks that carry the point the CONTEXT makes about the code.
+If the CONTEXT presents the code as a mistake, an anti-pattern, or something that
+does not compile (watch for "naive", "do NOT", "wrong", a ❌ mark, "won't compile",
+or a fix shown right after), do NOT pick blanks. Instead return:
+[{{"negative": true, "problem": "what is wrong with the code", "fix": "the correct approach"}}]
+
+Otherwise return ONLY JSON: [{{"blanks": ["exact substring"], "hint": "one line saying what the code does"}}]"""
 
 
-def _generate_code_cloze(client: Any, asset: dict) -> Flashcard | None:
+def _asset_context(content: str, token: str, radius: int = 300) -> str:
+    """Prose around [token] with code fences stripped — the teaching point
+    lives in the sentences before/after the code, not in the code (issue #20)."""
+    prose = re.sub(r"```.*?(```|$)", "", content, flags=re.S)
+    idx = prose.find(f"[{token}]")
+    if idx == -1:
+        return ""
+    return prose[max(0, idx - radius): idx + len(token) + 2 + radius].strip()
+
+
+def _generate_code_cloze(client: Any, asset: dict, context: str = "") -> Flashcard | None:
     """One focused model call per code asset → one cloze card (issue #17).
 
     The asset registry has the exact code, so blanks are validated as substrings
     here instead of hoping the main generation call gets the JSON right.
+    Code the surrounding notes present as a mistake becomes a troubleshoot card
+    instead of a memorisation cloze (issue #20).
     """
     try:
         raw = client.generate_json_array(_CLOZE_PROMPT.format(
-            language=asset.get("language", "code"), code=asset["content"]
+            language=asset.get("language", "code"),
+            code=asset["content"],
+            context=context or "(none)",
         ))
     except Exception as e:
         console.print(f"[yellow]  cloze generation failed for [{asset['token']}]: {e}[/yellow]")
@@ -346,6 +386,18 @@ def _generate_code_cloze(client: Any, asset: dict) -> Flashcard | None:
     for item in raw:
         if not isinstance(item, dict):
             continue
+        if item.get("negative"):
+            problem = str(item.get("problem", "")).strip()
+            fix = str(item.get("fix", "")).strip()
+            if not problem:
+                return None
+            token = asset["token"]
+            return Flashcard(
+                f"What is wrong with this code?\n[{token}]",
+                f"[{token}]\n{problem}" + (f"\n\nFix: {fix}" if fix else ""),
+                [],
+                card_type="troubleshoot",
+            )
         blanks = [str(b) for b in item.get("blanks", []) if str(b) and str(b) in asset["content"]]
         if blanks:
             hint = str(item.get("hint", "")).strip()
@@ -402,6 +454,63 @@ _LEAK_MARKERS = ('"front"', '"back"', "JSON array", "recall|command")
 
 def _normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", text.lower()).strip()
+
+
+_STOPWORDS = frozenset(
+    "a an the is are was be to of in on for and or it this that what how "
+    "which where when you your with as by at not no do does".split()
+)
+
+
+def _word_jaccard(a: str, b: str) -> float:
+    wa = {w for w in _normalize(a).split() if w not in _STOPWORDS}
+    wb = {w for w in _normalize(b).split() if w not in _STOPWORDS}
+    return len(wa & wb) / len(wa | wb) if wa | wb else 0.0
+
+
+_DEDUPE_PROMPT = """These flashcards all come from one deck. A summary or quick-reference
+section often restates a fact that already has a card — find such duplicates.
+
+CARDS:
+{cards}
+
+Return ONLY JSON: a (possibly empty) array of {{"keep": <n>, "drop": <m>}} pairs where
+card m asks the same fact as card n. Distinct facts about the same topic are NOT duplicates."""
+
+
+def _dedupe_cards_llm(client: Any, cards: list[Flashcard]) -> list[Flashcard]:
+    """Deck-level near-duplicate removal (issue #22).
+
+    String similarity can't do this: the observed real duplicate pair scores
+    *lower* on front similarity than legitimate template-sharing pairs
+    ('purpose of #pragma optimize' vs 'purpose of #pragma region'). So the
+    model judges, and a drop is only honored when word overlap confirms the
+    pair is actually related — a small model can't nuke unrelated cards.
+    """
+    qa = [(i, c) for i, c in enumerate(cards) if c.card_type != "cloze"]
+    if len(qa) < 2:
+        return cards
+    listing = "\n".join(f"{n}. {c.front} — {c.back[:80]}" for n, (_, c) in enumerate(qa, 1))
+    try:
+        raw = client.generate_json_array(_DEDUPE_PROMPT.format(cards=listing))
+    except Exception as e:
+        console.print(f"[yellow]Dedupe pass failed, keeping all cards: {e}[/yellow]")
+        return cards
+    drop: set[int] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        k, d = item.get("keep"), item.get("drop")
+        if not (isinstance(k, int) and isinstance(d, int)):
+            continue
+        if not (1 <= k <= len(qa) and 1 <= d <= len(qa)) or k == d:
+            continue
+        keep_card, drop_card = qa[k - 1][1], qa[d - 1][1]
+        # ponytail: 0.15 calibrated on the 2026-07-03 decks — true dup 0.24, unrelated ≤0.09
+        if _word_jaccard(keep_card.front + " " + keep_card.back,
+                         drop_card.front + " " + drop_card.back) >= 0.15:
+            drop.add(qa[d - 1][0])
+    return [c for i, c in enumerate(cards) if i not in drop]
 
 
 def _quality_gate(

@@ -80,12 +80,77 @@ def test_generate_backfills_cloze_for_uncited_code(monkeypatch):
     gen.ollama = _FakeOllama([{
         "front": "Q?", "back": "A sufficiently long answer about stamina replication.", "type": "recall",
     }])
-    monkeypatch.setattr(fg, "_generate_code_cloze", lambda client, asset: Flashcard(
+    monkeypatch.setattr(fg, "_generate_code_cloze", lambda client, asset, context="": Flashcard(
         "hint", f"[{asset['token']}]", [], card_type="cloze", code_ref=asset["token"], blanks=["Stamina"],
     ))
     content = "Replication setup:\n[CODE 1]\n```cpp\n" + CODE + "\n```"
     cards = gen.generate_flashcards(content, "T", assets=ASSETS)
     assert sum(1 for c in cards if c.card_type == "cloze") == 1
+
+
+def test_cloze_prompt_receives_surrounding_prose():
+    """Blanks should carry the teaching point, which lives in the prose (issue #20)."""
+    client = _FakeOllama([{"blanks": ["ReplicatedUsing"], "hint": "h"}])
+    _generate_code_cloze(client, ASSETS[0], context="Replication needs a change callback.")
+    assert "Replication needs a change callback." in client.prompts[0]
+
+
+def test_negative_example_flips_to_troubleshoot_card():
+    """Code shown as a mistake must not become a memorisation card (issue #20)."""
+    client = _FakeOllama([{
+        "negative": True,
+        "problem": "Moves 1 unit per frame, so speed depends on framerate.",
+        "fix": "Scale the offset by DeltaTime.",
+    }])
+    card = _generate_code_cloze(client, ASSETS[0], context="A naive Tick — do NOT do this:")
+    assert card.card_type == "troubleshoot"
+    assert "[CODE 1]" in card.front and "[CODE 1]" in card.back
+    assert "DeltaTime" in card.back
+
+
+def test_negative_without_problem_text_yields_no_card():
+    card = _generate_code_cloze(_FakeOllama([{"negative": True}]), ASSETS[0], context="Broken:")
+    assert card is None
+
+
+def test_asset_context_is_prose_with_fences_stripped():
+    from flashygen.flashcard_generator import _asset_context
+    content = "The naive version:\n[CODE 1]\n```cpp\n" + CODE + "\n```\nThis breaks at high FPS."
+    ctx = _asset_context(content, "CODE 1")
+    assert "The naive version:" in ctx
+    assert "This breaks at high FPS." in ctx  # prose AFTER the fence survives
+    assert "UPROPERTY" not in ctx  # the code itself does not
+
+
+def test_backfill_passes_prose_context(monkeypatch):
+    from flashygen import flashcard_generator as fg
+    gen = FlashcardGenerator(None, provider="ollama", validate=False)
+    gen.ollama = _FakeOllama([])
+    seen = {}
+
+    def fake(client, asset, context=""):
+        seen["ctx"] = context
+        return None
+
+    monkeypatch.setattr(fg, "_generate_code_cloze", fake)
+    content = "Replication setup:\n[CODE 1]\n```cpp\n" + CODE + "\n```"
+    gen.generate_flashcards(content, "T", assets=ASSETS)
+    assert "Replication setup:" in seen["ctx"]
+
+
+def test_backfill_skips_diagram_assets(monkeypatch):
+    """Mermaid/diagram blocks are illustrations, not code to memorise (issue #21)."""
+    from flashygen import flashcard_generator as fg
+    gen = FlashcardGenerator(None, provider="ollama", validate=False)
+    gen.ollama = _FakeOllama([{
+        "front": "Q?", "back": "A sufficiently long answer about the class hierarchy.", "type": "recall",
+    }])
+    called = []
+    monkeypatch.setattr(fg, "_generate_code_cloze", lambda client, asset: called.append(asset["token"]))
+    assets = [{"token": "CODE 1", "kind": "code", "language": "mermaid",
+               "content": "graph LR\n  UObject --> AActor"}]
+    gen.generate_flashcards("Hierarchy:\n[CODE 1]", "T", assets=assets)
+    assert called == []
 
 
 def test_exporter_emits_cloze_note_alongside_qa(tmp_path):

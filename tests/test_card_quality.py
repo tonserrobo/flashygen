@@ -14,6 +14,12 @@ def test_prompt_has_worked_example_and_density_scaling():
     assert "3 to 6" not in prompt
 
 
+def test_prompt_directs_table_row_harvesting():
+    """8-row decision tables yielded ~1 card — tables need an explicit nudge (issue #23)."""
+    prompt = _build_ollama_prompt("content", "Title")
+    assert "|" in prompt and "table row" in prompt.lower()
+
+
 def test_parse_keeps_card_type():
     cards = _parse_raw_cards([{"front": "Q?", "back": "A" * 50, "type": "command"}], "T")
     assert cards[0].card_type == "command"
