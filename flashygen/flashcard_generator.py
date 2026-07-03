@@ -118,10 +118,12 @@ class FlashcardGenerator:
             checkpoint = work / f"section_{i:02d}.json" if work else None
             if checkpoint and checkpoint.exists():
                 data = json.loads(checkpoint.read_text(encoding="utf-8"))
-                if data.get("content_hash") == content_hash:
+                # an empty checkpoint is a failed attempt, not a result — regenerate
+                if data.get("content_hash") == content_hash and data.get("cards"):
                     cards = [card_from_dict(d) for d in data["cards"]]
                     for card in cards:
                         card.tags = [hierarchy_tag, f"type::{card.card_type}"]
+                        card.section = heading  # re-stamp: checkpoint may predate a heading rename
                     all_flashcards.extend(cards)
                     console.print(f"[dim]✓ Resumed {len(cards)} cards from checkpoint[/dim]")
                     continue
@@ -130,6 +132,11 @@ class FlashcardGenerator:
                 section_flashcards = self.generate_flashcards(
                     content, f"{title} - {heading}", cards_per_concept, assets=assets
                 )
+                if not section_flashcards:
+                    console.print("[dim]  0 cards — retrying section once[/dim]")
+                    section_flashcards = self.generate_flashcards(
+                        content, f"{title} - {heading}", cards_per_concept, assets=assets
+                    )
                 for card in section_flashcards:
                     card.tags = [hierarchy_tag, f"type::{card.card_type}"]
                     card.section = heading
@@ -170,10 +177,26 @@ class FlashcardGenerator:
             for j, chunk in enumerate(chunks, 1):
                 console.print(f"[cyan]  Chunk {j}/{len(chunks)} ({len(chunk)} chars)...[/cyan]")
                 try:
-                    cards = self._generate_ollama_chunk(chunk, title)
+                    cards = self._generate_ollama_chunk(chunk, title, cards_per_concept)
                     all_cards.extend(cards)
                 except Exception as e:
                     console.print(f"[yellow]  Chunk {j} failed: {e}[/yellow]")
+
+            # Deterministic cloze backfill (issue #17): every [CODE n] in this
+            # content gets a dedicated focused call instead of relying on the
+            # main prompt's single card to also be a cloze.
+            if assets:
+                covered = {c.code_ref for c in all_cards if c.card_type == "cloze"}
+                for token in dict.fromkeys(re.findall(r"\[(CODE \d+)\]", content)):
+                    if token in covered:
+                        continue
+                    asset = next((a for a in assets if a["token"] == token), None)
+                    if asset is None:
+                        continue
+                    cloze = _generate_code_cloze(self.ollama, asset)
+                    if cloze:
+                        all_cards.append(cloze)
+                        console.print(f"[dim]  + cloze card for [{token}][/dim]")
 
         kept, dropped = _quality_gate(all_cards, assets=assets)
         if dropped:
@@ -184,8 +207,8 @@ class FlashcardGenerator:
     # Ollama path                                                          #
     # ------------------------------------------------------------------ #
 
-    def _generate_ollama_chunk(self, content: str, title: str) -> list[Flashcard]:
-        prompt = _build_ollama_prompt(content, title)
+    def _generate_ollama_chunk(self, content: str, title: str, cards_per_concept: int = 3) -> list[Flashcard]:
+        prompt = _build_ollama_prompt(content, title, cards_per_concept)
         with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as p:
             p.add_task("Generating...", total=None)
             raw: list[Any] = self.ollama.generate_json_array(prompt)
@@ -237,13 +260,14 @@ class FlashcardGenerator:
 # Helpers (module-level, no state)                                    #
 # ------------------------------------------------------------------ #
 
-def _build_ollama_prompt(content: str, title: str) -> str:
+def _build_ollama_prompt(content: str, title: str, cards_per_concept: int = 3) -> str:
     return f"""You are creating Anki flashcards for a student studying "{title}".
 
 OUTPUT: a JSON array only — no prose, no markdown fences, no explanation.
 
 RULES:
-- Generate 1 to 6 cards — only as many as the content genuinely supports. Never pad with trivia.
+- Aim for about {cards_per_concept} cards (1 to 6), one per distinct fact, command, or
+  pitfall — only as many as the content genuinely supports. Never pad with trivia.
 - Every distinct command, error, setting, or code snippet must get its own card.
 - Card types:
     "recall"      — definition or fact ("What is X?")
@@ -259,10 +283,6 @@ RULES:
 - Optionally add "explainer": 1-3 sentences of context BEYOND the answer (why it matters,
   a pitfall, a connection to another concept). Never restate the answer; use "" if you
   have nothing genuine to add.
-- If the content contains a [CODE n] block, ALSO add ONE cloze card for it:
-    {{"type": "cloze", "code_ref": "CODE n", "blanks": ["exact substring"], "hint": "one-line context"}}
-  "blanks" = 1-3 substrings copied EXACTLY from that code that are worth memorising
-  (a specifier, macro name, or key argument — never whole lines).
 - Use \\n for newlines inside JSON strings.
 
 EXAMPLE of a good card:
@@ -298,6 +318,46 @@ Content:
 
 Return ONLY a valid JSON array. Each object: "front", "back", "type", and optionally
 "explainer" (1-3 sentences of context beyond the answer, or ""). No other text."""
+
+
+_CLOZE_PROMPT = """From this {language} code, pick 1 to 3 short substrings worth memorising —
+a specifier, macro name, function name, or key argument. Copy each EXACTLY as it
+appears in the code. Never pick whole lines.
+
+CODE:
+{code}
+
+Return ONLY JSON: [{{"blanks": ["exact substring"], "hint": "one line saying what the code does"}}]"""
+
+
+def _generate_code_cloze(client: Any, asset: dict) -> Flashcard | None:
+    """One focused model call per code asset → one cloze card (issue #17).
+
+    The asset registry has the exact code, so blanks are validated as substrings
+    here instead of hoping the main generation call gets the JSON right.
+    """
+    try:
+        raw = client.generate_json_array(_CLOZE_PROMPT.format(
+            language=asset.get("language", "code"), code=asset["content"]
+        ))
+    except Exception as e:
+        console.print(f"[yellow]  cloze generation failed for [{asset['token']}]: {e}[/yellow]")
+        return None
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        blanks = [str(b) for b in item.get("blanks", []) if str(b) and str(b) in asset["content"]]
+        if blanks:
+            hint = str(item.get("hint", "")).strip()
+            return Flashcard(
+                hint or f"Complete the code ({asset['token']})",
+                f"[{asset['token']}]",
+                [],
+                card_type="cloze",
+                code_ref=asset["token"],
+                blanks=blanks[:3],
+            )
+    return None
 
 
 _CARD_TYPES = {"recall", "command", "conceptual", "troubleshoot", "application", "comparison"}

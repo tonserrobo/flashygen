@@ -44,6 +44,26 @@ def test_unhandled_block_types_are_recorded_not_silent():
     assert parser.skipped_types == set()  # reset per page
 
 
+def test_column_containers_are_transparent_not_skipped():
+    """column/column_list are structure, not content — they must not trip the
+    'Unhandled block types dropped' warning while their children parse fine (issue #16)."""
+    parser = NotionContentParser()
+    blocks = [{
+        "type": "column_list", "column_list": {},
+        "children": [
+            {"type": "column", "column": {}, "children": [
+                {"type": "paragraph", "paragraph": {"rich_text": [{"plain_text": "Left cell", "annotations": {}}]}},
+            ]},
+            {"type": "column", "column": {}, "children": [
+                {"type": "paragraph", "paragraph": {"rich_text": [{"plain_text": "Right cell", "annotations": {}}]}},
+            ]},
+        ],
+    }]
+    text = parser.parse_blocks(blocks)
+    assert "Left cell" in text and "Right cell" in text
+    assert parser.skipped_types == set()
+
+
 def test_exporter_converts_math_to_anki_mathjax():
     e = AnkiExporter()
     assert r"\[\sqrt{x^2}\]" in e._format_content(r"$$\sqrt{x^2}$$")

@@ -38,6 +38,11 @@ def chunk_text(content: str, max_chars: int) -> List[str]:
         size += unit_len
     if current:
         chunks.append("\n".join(current))
+    # A tiny tail only yields thin cards that the quality gate drops (issue #15) —
+    # fold it into the previous chunk; slight overflow is already allowed for fences.
+    if len(chunks) > 1 and len(chunks[-1]) < max_chars // 3:
+        tail = chunks.pop()
+        chunks[-1] += "\n" + tail
     return chunks
 
 
@@ -162,6 +167,9 @@ class NotionContentParser:
         elif block_type == "divider":
             return "---"
 
+        elif block_type in ("column_list", "column", "synced_block"):
+            return ""  # structural containers — their children carry the content
+
         # Unhandled type — record it so coverage gaps are visible, not silent
         self.skipped_types.add(block_type)
         return ""
@@ -204,7 +212,9 @@ class NotionContentParser:
         Deeper headings are kept within their parent section for context.
         """
         sections = []
-        current_section = {"heading": "", "content": []}
+        # preamble before the first heading gets a real name — "" leaks into
+        # prompts, tags, and manifest keys (issue #18)
+        current_section = {"heading": "Introduction", "content": []}
 
         lines = content.split("\n")
 

@@ -7,7 +7,9 @@ from pathlib import Path
 from flashygen.anki_exporter import AnkiExporter
 from flashygen.flashcard_generator import (
     Flashcard,
+    FlashcardGenerator,
     _build_ollama_prompt,
+    _generate_code_cloze,
     _parse_raw_cards,
     _quality_gate,
 )
@@ -36,9 +38,54 @@ def test_gate_keeps_valid_cloze_and_drops_hallucinated_blanks():
     assert len(kept) == 1 and kept[0].blanks == ["ReplicatedUsing", "100.f"] and dropped == 2
 
 
-def test_prompt_requests_cloze_cards():
+def test_prompt_no_longer_requests_cloze_cards():
+    """Cloze cards are generated deterministically per code asset (issue #17) —
+    the main prompt must not distract a small model with a second output schema."""
     prompt = _build_ollama_prompt("content", "T")
-    assert '"cloze"' in prompt and '"blanks"' in prompt
+    assert '"cloze"' not in prompt and '"blanks"' not in prompt
+
+
+class _FakeOllama:
+    def __init__(self, raw):
+        self.raw, self.prompts = raw, []
+
+    def generate_json_array(self, prompt, **kwargs):
+        self.prompts.append(prompt)
+        return self.raw
+
+
+def test_dedicated_cloze_call_builds_card_from_asset():
+    client = _FakeOllama([{"blanks": ["ReplicatedUsing"], "hint": "Replication macro"}])
+    card = _generate_code_cloze(client, ASSETS[0])
+    assert card.card_type == "cloze"
+    assert card.code_ref == "CODE 1" and card.blanks == ["ReplicatedUsing"]
+    assert CODE in client.prompts[0]  # model sees the exact registered code
+
+
+def test_dedicated_cloze_keeps_only_exact_substrings():
+    client = _FakeOllama([{"blanks": ["DOREPLIFETIME", "Stamina"], "hint": "h"}])
+    card = _generate_code_cloze(client, ASSETS[0])
+    assert card.blanks == ["Stamina"]  # hallucinated blank filtered out
+
+
+def test_dedicated_cloze_returns_none_when_nothing_valid():
+    assert _generate_code_cloze(_FakeOllama([{"blanks": ["DOREPLIFETIME"], "hint": "h"}]), ASSETS[0]) is None
+    assert _generate_code_cloze(_FakeOllama([]), ASSETS[0]) is None
+
+
+def test_generate_backfills_cloze_for_uncited_code(monkeypatch):
+    """Every [CODE n] in a section gets a cloze card even when the main call cites none."""
+    from flashygen import flashcard_generator as fg
+    gen = FlashcardGenerator(None, provider="ollama", validate=False)
+    gen.ollama = _FakeOllama([{
+        "front": "Q?", "back": "A sufficiently long answer about stamina replication.", "type": "recall",
+    }])
+    monkeypatch.setattr(fg, "_generate_code_cloze", lambda client, asset: Flashcard(
+        "hint", f"[{asset['token']}]", [], card_type="cloze", code_ref=asset["token"], blanks=["Stamina"],
+    ))
+    content = "Replication setup:\n[CODE 1]\n```cpp\n" + CODE + "\n```"
+    cards = gen.generate_flashcards(content, "T", assets=ASSETS)
+    assert sum(1 for c in cards if c.card_type == "cloze") == 1
 
 
 def test_exporter_emits_cloze_note_alongside_qa(tmp_path):

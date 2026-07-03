@@ -42,6 +42,22 @@ def test_plain_text_still_splits():
     assert "".join(chunks).replace("\n", "") == lines.replace("\n", "")  # nothing lost
 
 
+def test_tiny_tail_chunk_merged_into_previous():
+    """A sub-min remainder must not become its own chunk — it only yields thin cards (issue #15)."""
+    content = "a" * 900 + "\n" + "b" * 900 + "\n" + "c" * 100
+    chunks = chunk_text(content, max_chars=1000)
+    assert len(chunks) == 2
+    assert chunks[-1] == "b" * 900 + "\n" + "c" * 100  # tail folded in, nothing lost
+
+
+def test_preamble_before_first_h1_gets_named_section():
+    """Content before the first H1 must not produce an empty heading (issue #18)."""
+    parser = NotionContentParser()
+    sections = parser.extract_content_sections("Intro line.\n# Setup\nBody.", max_heading_level=1)
+    assert [s["heading"] for s in sections] == ["Introduction", "Setup"]
+    assert sections[0]["content"] == "Intro line."
+
+
 def test_split_large_sections_preserves_fences():
     parser = NotionContentParser()
     prose = "\n".join(f"Explanatory sentence number {i}. " + "z" * 70 for i in range(8))

@@ -3,6 +3,34 @@
 All notable changes to FlashyGen are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## [0.2.1] - 2026-07-03
+
+Coverage fixes driven by a log review of the four UE5 deck runs
+(issues [#13](https://github.com/tonserrobo/flashygen/issues/13)–[#18](https://github.com/tonserrobo/flashygen/issues/18)).
+
+### Fixed
+- **Empty checkpoints no longer freeze sections** (#13): a section that produced 0 cards is
+  regenerated on the next run instead of being "resumed" empty forever. Resumed cards also
+  get re-stamped with the current section heading, so coverage attribution survives renames.
+- **Zero-card sections retried once** (#14, partial): a section whose cards were all dropped
+  gets one more generation attempt before going uncovered. `cards_per_concept` now reaches
+  the Ollama prompt ("Aim for about N cards") instead of stopping at the CLI banner.
+- **Tiny tail chunks merged** (#15): a sub-`max/3` remainder after chunking folds into the
+  previous chunk instead of becoming its own section that only ever yields dropped thin cards.
+- **Column content warning** (#16): `column`/`column_list`/`synced_block` are treated as the
+  structural containers they are — their children were always parsed; the false
+  "Unhandled block types dropped" warning is gone.
+- **Preamble sections named** (#18): content before the first heading is sectioned as
+  "Introduction" instead of an empty string that leaked into prompts, tags, and manifest keys.
+
+### Changed
+- **Deterministic cloze generation** (#17): instead of asking the main generation call to also
+  emit cloze JSON (which gemma-class models almost never did), every `[CODE n]` in a section
+  now gets a dedicated focused call that picks blanks from the exact registered code, validated
+  as substrings before the card is built. The cloze schema is dropped from the main prompt.
+  Note: backfill runs at generation time, so checkpoint-resumed sections keep their existing
+  cards — delete `decks/.work/<page_id>/` (or edit the note) to regenerate with cloze coverage.
+
 ## [0.2.0] - 2026-07-02
 
 Card-quality and incremental-update overhaul, driven by a review of the UE5 C++ decks

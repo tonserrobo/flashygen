@@ -30,3 +30,8 @@ def test_ollama_prompt_generates_json_array():
     prompt = _build_ollama_prompt("some content", "Test Page")
     assert "JSON array" in prompt
     assert "some content" in prompt
+
+def test_ollama_prompt_states_target_card_count():
+    """cards_per_concept must reach the prompt, not just the CLI banner (issue #14)."""
+    assert "Aim for about 3 cards" in _build_ollama_prompt("c", "T")
+    assert "Aim for about 5 cards" in _build_ollama_prompt("c", "T", cards_per_concept=5)
