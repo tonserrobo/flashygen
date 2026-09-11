@@ -418,12 +418,17 @@ class AnkiExporter:
             if asset["kind"] == "code":
                 code = self._highlight_code(asset["content"], asset["language"])
                 return f'<pre data-language="{asset["language"]}"><code>{code}</code></pre>'
-            ext = Path(asset["url"].split("?")[0]).suffix or ".png"
+            url = asset.get("url", "")
+            if not url:
+                # Diagram figures (mermaid/plantuml) carry source, not a URL.
+                code = self._highlight_code(asset.get("content", ""), asset.get("caption") or "diagram")
+                return f'<pre data-language="diagram"><code>{code}</code></pre>'
+            ext = Path(url.split("?")[0]).suffix or ".png"
             filename = f"fg_{match.group(2)}{ext}"
             path = media_dir / filename
             if not path.exists():
                 media_dir.mkdir(parents=True, exist_ok=True)
-                resp = requests.get(asset["url"], timeout=30)
+                resp = requests.get(url, timeout=30)
                 resp.raise_for_status()
                 path.write_bytes(resp.content)
             if str(path) not in media:

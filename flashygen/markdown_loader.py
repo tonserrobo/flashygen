@@ -27,6 +27,11 @@ from flashygen.content_parser import NotionContentParser
 _FENCE_RE = re.compile(r"```([\w+#.-]*)")
 _IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
 _FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
+_H1_RE = re.compile(r"^#\s+(.+)$")
+# Diagram fence languages are illustrations, not code to memorise. They are
+# registered as figures (not code) so they never become cloze targets and never
+# consume CODE n slots (mirrors flashcard_generator._DIAGRAM_LANGUAGES).
+_DIAGRAM_LANGUAGES = {"mermaid", "plantuml", "dot", "graphviz"}
 
 
 def find_markdown_files(path: str | Path) -> List[Path]:
@@ -83,6 +88,14 @@ class MarkdownNoteLoader:
                 if i < len(lines):  # closing fence
                     i += 1
                 code = "\n".join(body)
+                if lang.strip().lower() in _DIAGRAM_LANGUAGES:
+                    token = self._next_token("figure")
+                    self.assets.append(
+                        {"token": token, "kind": "figure", "url": "", "caption": lang,
+                         "content": code}
+                    )
+                    out.append(f"[{token}: {lang}]")
+                    continue
                 token = self._next_token("code")
                 self.assets.append(
                     {"token": token, "kind": "code", "language": lang, "content": code}
@@ -124,10 +137,34 @@ class MarkdownNoteLoader:
         for file in self.files:
             raw = file.read_text(encoding="utf-8")
             raw = _FRONTMATTER_RE.sub("", raw)
+            raw = self._relevel_internal_h1(raw)
             content = self._extract_assets(raw).strip()
             title = self._note_title(file)
             parts.append(f"# {title}\n\n{content}")
         return "\n\n".join(parts), self.files
+
+    @staticmethod
+    def _relevel_internal_h1(text: str) -> str:
+        """Demote any in-note H1 (``# ...``) to H2.
+
+        Each file is prefixed with its own H1 derived from the file stem, so a
+        note that already contains a top-level heading would otherwise split
+        itself into its own top-level section (issue #25). Fenced code blocks
+        are skipped so ``#include``-style lines and diagram source are untouched.
+        """
+        lines = text.split("\n")
+        out: List[str] = []
+        in_fence = False
+        for line in lines:
+            if line.strip().startswith("```"):
+                in_fence = not in_fence
+                out.append(line)
+                continue
+            if not in_fence and _H1_RE.match(line):
+                out.append("## " + _H1_RE.match(line).group(1))
+                continue
+            out.append(line)
+        return "\n".join(out)
 
     @staticmethod
     def _note_title(file: Path) -> str:

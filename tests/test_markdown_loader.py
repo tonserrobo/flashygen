@@ -56,6 +56,43 @@ def test_code_blocks_tokenized_as_assets(tmp_path):
     ]
 
 
+def test_diagram_fence_registered_as_figure(tmp_path):
+    """Mermaid/plantuml fences are illustrations, not code to cloze (issue #24)."""
+    _write(tmp_path, "note.md", "# Note\n\n```mermaid\nflowchart TD;\n  A --> B;\n```\n\nText.")
+    loader = MarkdownNoteLoader()
+    content, _ = loader.load_directory(tmp_path)
+
+    assert "[FIGURE 1: mermaid]" in content
+    assert "```mermaid" not in content
+    assert loader.assets == [
+        {"token": "FIGURE 1", "kind": "figure", "url": "", "caption": "mermaid",
+         "content": "flowchart TD;\n  A --> B;"}
+    ]
+
+
+def test_diagram_does_not_consume_code_token(tmp_path):
+    """A diagram fence must not shift the CODE n numbering (issue #24)."""
+    _write(tmp_path, "note.md", "# Note\n\n```cpp\nint x;\n```\n\n```mermaid\nflowchart TD;\n  A --> B;\n```")
+    loader = MarkdownNoteLoader()
+    content, _ = loader.load_directory(tmp_path)
+
+    assert "[CODE 1]" in content
+    assert "[FIGURE 1: mermaid]" in content
+    assert [a["token"] for a in loader.assets] == ["CODE 1", "FIGURE 1"]
+
+
+def test_internal_h1_releveled_to_h2(tmp_path):
+    """A note's own H1 is demoted so the file-stem H1 stays top-level (issue #25)."""
+    _write(tmp_path, "Vectors.md", "# Vectors\n\nBody.\n\n# Key Takeaways\n\n- Bullet.")
+    loader = MarkdownNoteLoader()
+    content, _ = loader.load_directory(tmp_path)
+
+    assert content.startswith("# Vectors\n")
+    assert "## Key Takeaways" in content
+    assert "\n# Key Takeaways" not in content
+    assert loader.assets == []
+
+
 def test_images_tokenized_as_figures(tmp_path):
     _write(tmp_path, "note.md", "# Note\n\n![Diagram](fig.png)\n\n![][x]\n\nPlain ![alt](y.png) link.")
     loader = MarkdownNoteLoader()
