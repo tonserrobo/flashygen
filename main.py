@@ -12,6 +12,7 @@ from flashygen.notion_client import NotionPageFetcher
 from flashygen.content_parser import NotionContentParser
 from flashygen.flashcard_generator import FlashcardGenerator
 from flashygen.anki_exporter import AnkiExporter
+from flashygen.markdown_loader import section_markdown
 from flashygen import manifest as mf
 
 app = typer.Typer(help="Generate Anki flashcards from Notion pages using AI")
@@ -73,6 +74,196 @@ def _print_coverage(cov: dict):
         console.print(f"  [yellow]uncited asset:[/yellow] [{token}]")
 
 
+def _resolve_config(provider: str):
+    """Load and validate config, print errors, return config or exit."""
+    config = get_config(provider)
+    valid, message = config.validate()
+    if not valid:
+        console.print(f"[red]Configuration error: {message}[/red]")
+        console.print("[yellow]Please check your .env file. See .env.example for reference.[/yellow]")
+        raise typer.Exit(1)
+    provider_name = "Claude" if config.provider == "claude" else f"Ollama ({config.model})"
+    console.print(f"[dim]Using AI provider: {provider_name}[/dim]")
+    return config
+
+
+def _run_generate(
+    page_data: dict,
+    parser,
+    sections: list,
+    output: str,
+    cards_per_concept: int,
+    deck_name: str,
+    config,
+    validate: bool,
+):
+    """Shared generate pipeline (Notion or markdown source)."""
+    provider_display = "Claude" if config.provider == "claude" else "Ollama"
+    console.print(f"\n[bold]Step 3:[/bold] Generating flashcards with {provider_display} (target: {cards_per_concept} per concept)...")
+    generator = FlashcardGenerator(
+        config.anthropic_api_key,
+        config.model,
+        provider=config.provider,
+        ollama_base_url=config.ollama_base_url,
+        validate=validate
+    )
+
+    # Chunked processing with per-section disk checkpoints (resumable runs)
+    flashcards = generator.generate_flashcards_from_sections(
+        sections,
+        page_data['title'],
+        cards_per_concept,
+        hierarchy=page_data.get('hierarchy', []),
+        assets=parser.assets,
+        work_dir=str(Path("decks") / ".work" / page_data['id'])
+    )
+
+    if not flashcards:
+        console.print("[red]Error: No flashcards were generated![/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Generated {len(flashcards)} flashcards")
+
+    # Show flashcard preview
+    console.print("\n[bold]Flashcard Preview:[/bold]")
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Type", style="cyan")
+    table.add_column("Front", style="white")
+    table.add_column("Back", style="green")
+
+    # Show first 3 flashcards
+    for card in flashcards[:3]:
+        card_type = card.card_type
+        front_preview = card.front[:50] + "..." if len(card.front) > 50 else card.front
+        back_preview = card.back[:50] + "..." if len(card.back) > 50 else card.back
+        table.add_row(card_type, front_preview, back_preview)
+
+    if len(flashcards) > 3:
+        table.add_row("...", "...", "...")
+
+    console.print(table)
+
+    # Step 4: Export to Anki
+    console.print(f"\n[bold]Step 4:[/bold] Creating Anki deck...")
+    exporter = AnkiExporter()
+
+    # Use custom deck name or page title
+    final_deck_name = deck_name or page_data['title']
+
+    output_file = exporter.create_deck(
+        flashcards,
+        final_deck_name,
+        output,
+        assets=parser.assets,
+        page_id=page_data['id']
+    )
+
+    # Write the card manifest next to the deck and report coverage
+    deck_manifest = mf.build_manifest(
+        page_data['id'], page_data['title'], sections, flashcards, parser.assets
+    )
+    manifest_file = mf.write_manifest(deck_manifest, output_file)
+    console.print(f"[dim]Manifest: {manifest_file}[/dim]")
+    _print_coverage(mf.coverage(deck_manifest))
+
+    # Final success message
+    console.print(Panel.fit(
+        f"[bold green]Success![/bold green]\n\n"
+        f"Created: [cyan]{output_file}[/cyan]\n"
+        f"Cards: [yellow]{len(flashcards)}[/yellow]\n"
+        f"Deck: [magenta]{final_deck_name}[/magenta]\n\n"
+        f"Import this file into Anki to start learning!",
+        border_style="green",
+        title="✓ Flashcards Generated"
+    ))
+
+
+def _run_check(page_data: dict, parser, sections: list, manifest_path: str):
+    """Shared check pipeline (Notion or markdown source)."""
+    manifest_path = manifest_path or _default_manifest_path(page_data['title'])
+    if not Path(manifest_path).exists():
+        console.print(f"[red]No manifest at {manifest_path} — generate the deck first.[/red]")
+        raise typer.Exit(1)
+
+    diff = mf.diff_sections(mf.load_manifest(manifest_path), sections)
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Status", style="cyan")
+    table.add_column("Section", style="white")
+    for heading in diff["new"]:
+        table.add_row("new", heading)
+    for heading in diff["changed"]:
+        table.add_row("changed", heading)
+    for heading in diff["uncovered"]:
+        table.add_row("no cards", heading)
+    for token in diff["uncited_assets"]:
+        table.add_row("uncited asset", f"[{token}]")
+    console.print(table)
+
+    gaps = len(diff["new"]) + len(diff["changed"]) + len(diff["uncovered"])
+    if gaps:
+        console.print(f"[yellow]{gaps} section(s) need attention — run: python main.py update {page_url_hint(page_data)}[/yellow]")
+        raise typer.Exit(1)
+    console.print("[green]Deck is up to date with the note.[/green]")
+
+
+def page_url_hint(page_data: dict) -> str:
+    """Command hint shown by check — markdown sources take a path, not a URL."""
+    return page_data.get("path", page_data.get("title", ""))
+
+
+def _run_update(page_data: dict, parser, sections: list, manifest_path: str, output: str, deck_name: str, config, validate: bool):
+    """Shared update pipeline (Notion or markdown source)."""
+    manifest_path = manifest_path or _default_manifest_path(page_data['title'])
+    if not Path(manifest_path).exists():
+        console.print(f"[red]No manifest at {manifest_path} — generate the deck first.[/red]")
+        raise typer.Exit(1)
+    old_manifest = mf.load_manifest(manifest_path)
+
+    diff = mf.diff_sections(old_manifest, sections)
+    targets = set(diff["new"] + diff["changed"] + diff["uncovered"])
+    if not targets:
+        console.print("[green]Deck is already up to date with the note.[/green]")
+        return
+
+    console.print(f"[cyan]Regenerating {len(targets)} section(s): {', '.join(sorted(targets))}[/cyan]")
+    generator = FlashcardGenerator(
+        config.anthropic_api_key,
+        config.model,
+        provider=config.provider,
+        ollama_base_url=config.ollama_base_url,
+        validate=validate
+    )
+    new_cards = generator.generate_flashcards_from_sections(
+        [s for s in sections if s["heading"] in targets],
+        page_data['title'],
+        hierarchy=page_data.get('hierarchy', []),
+        assets=parser.assets
+    )
+
+    kept_cards = [
+        mf.card_from_dict(c)
+        for s in old_manifest["sections"] if s["heading"] not in targets
+        for c in s["cards"]
+    ]
+    flashcards = kept_cards + new_cards
+    console.print(f"[green]✓[/green] {len(kept_cards)} kept + {len(new_cards)} regenerated")
+
+    output_file = AnkiExporter().create_deck(
+        flashcards,
+        deck_name or page_data['title'],
+        output,
+        assets=parser.assets,
+        page_id=page_data['id']
+    )
+    new_manifest = mf.build_manifest(
+        page_data['id'], page_data['title'], sections, flashcards, parser.assets
+    )
+    mf.write_manifest(new_manifest, output_file)
+    _print_coverage(mf.coverage(new_manifest))
+    console.print("[green]Re-import the deck in Anki — existing cards update in place.[/green]")
+
+
 @app.command()
 def generate(
     page_url: str = typer.Argument(..., help="Notion page URL or page ID"),
@@ -89,102 +280,11 @@ def generate(
         border_style="cyan"
     ))
 
-    # Load configuration
-    config = get_config(provider)
-    valid, message = config.validate()
-
-    if not valid:
-        console.print(f"[red]Configuration error: {message}[/red]")
-        console.print("[yellow]Please check your .env file. See .env.example for reference.[/yellow]")
-        raise typer.Exit(1)
-
-    # Show which provider is being used
-    provider_name = "Claude" if config.provider == "claude" else f"Ollama ({config.model})"
-    console.print(f"[dim]Using AI provider: {provider_name}[/dim]")
+    config = _resolve_config(provider)
 
     try:
         page_data, parser, sections = _fetch_and_section(config.notion_token, page_url)
-
-        # Step 3: Generate flashcards with AI
-        provider_display = "Claude" if config.provider == "claude" else "Ollama"
-        console.print(f"\n[bold]Step 3:[/bold] Generating flashcards with {provider_display} (target: {cards_per_concept} per concept)...")
-        generator = FlashcardGenerator(
-            config.anthropic_api_key,
-            config.model,
-            provider=config.provider,
-            ollama_base_url=config.ollama_base_url,
-            validate=validate
-        )
-
-        # Chunked processing with per-section disk checkpoints (resumable runs)
-        flashcards = generator.generate_flashcards_from_sections(
-            sections,
-            page_data['title'],
-            cards_per_concept,
-            hierarchy=page_data.get('hierarchy', []),
-            assets=parser.assets,
-            work_dir=str(Path("decks") / ".work" / page_data['id'])
-        )
-
-        if not flashcards:
-            console.print("[red]Error: No flashcards were generated![/red]")
-            raise typer.Exit(1)
-
-        console.print(f"[green]✓[/green] Generated {len(flashcards)} flashcards")
-
-        # Show flashcard preview
-        console.print("\n[bold]Flashcard Preview:[/bold]")
-        table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("Type", style="cyan")
-        table.add_column("Front", style="white")
-        table.add_column("Back", style="green")
-
-        # Show first 3 flashcards
-        for card in flashcards[:3]:
-            card_type = card.card_type
-            front_preview = card.front[:50] + "..." if len(card.front) > 50 else card.front
-            back_preview = card.back[:50] + "..." if len(card.back) > 50 else card.back
-            table.add_row(card_type, front_preview, back_preview)
-
-        if len(flashcards) > 3:
-            table.add_row("...", "...", "...")
-
-        console.print(table)
-
-        # Step 4: Export to Anki
-        console.print(f"\n[bold]Step 4:[/bold] Creating Anki deck...")
-        exporter = AnkiExporter()
-
-        # Use custom deck name or page title
-        final_deck_name = deck_name or page_data['title']
-
-        output_file = exporter.create_deck(
-            flashcards,
-            final_deck_name,
-            output,
-            assets=parser.assets,
-            page_id=page_data['id']
-        )
-
-        # Write the card manifest next to the deck and report coverage
-        deck_manifest = mf.build_manifest(
-            page_data['id'], page_data['title'], sections, flashcards, parser.assets
-        )
-        manifest_file = mf.write_manifest(deck_manifest, output_file)
-        console.print(f"[dim]Manifest: {manifest_file}[/dim]")
-        _print_coverage(mf.coverage(deck_manifest))
-
-        # Final success message
-        console.print(Panel.fit(
-            f"[bold green]Success![/bold green]\n\n"
-            f"Created: [cyan]{output_file}[/cyan]\n"
-            f"Cards: [yellow]{len(flashcards)}[/yellow]\n"
-            f"Deck: [magenta]{final_deck_name}[/magenta]\n\n"
-            f"Import this file into Anki to start learning!",
-            border_style="green",
-            title="✓ Flashcards Generated"
-        ))
-
+        _run_generate(page_data, parser, sections, output, cards_per_concept, deck_name, config, validate)
     except typer.Exit:
         raise
     except KeyboardInterrupt:
@@ -211,31 +311,7 @@ def check(
         raise typer.Exit(1)
 
     page_data, parser, sections = _fetch_and_section(config.notion_token, page_url)
-    manifest_path = manifest_path or _default_manifest_path(page_data['title'])
-    if not Path(manifest_path).exists():
-        console.print(f"[red]No manifest at {manifest_path} — generate the deck first.[/red]")
-        raise typer.Exit(1)
-
-    diff = mf.diff_sections(mf.load_manifest(manifest_path), sections)
-
-    table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Status", style="cyan")
-    table.add_column("Section", style="white")
-    for heading in diff["new"]:
-        table.add_row("new", heading)
-    for heading in diff["changed"]:
-        table.add_row("changed", heading)
-    for heading in diff["uncovered"]:
-        table.add_row("no cards", heading)
-    for token in diff["uncited_assets"]:
-        table.add_row("uncited asset", f"[{token}]")
-    console.print(table)
-
-    gaps = len(diff["new"]) + len(diff["changed"]) + len(diff["uncovered"])
-    if gaps:
-        console.print(f"[yellow]{gaps} section(s) need attention — run: python main.py update {page_url}[/yellow]")
-        raise typer.Exit(1)
-    console.print("[green]Deck is up to date with the note.[/green]")
+    _run_check(page_data, parser, sections, manifest_path)
 
 
 @app.command()
@@ -260,55 +336,88 @@ def update(
 
     try:
         page_data, parser, sections = _fetch_and_section(config.notion_token, page_url)
-        manifest_path = manifest_path or _default_manifest_path(page_data['title'])
-        if not Path(manifest_path).exists():
-            console.print(f"[red]No manifest at {manifest_path} — generate the deck first.[/red]")
-            raise typer.Exit(1)
-        old_manifest = mf.load_manifest(manifest_path)
+        _run_update(page_data, parser, sections, manifest_path, output, deck_name, config, validate)
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Operation cancelled by user[/yellow]")
+        raise typer.Exit(0)
+    except Exception as e:
+        console.print(f"\n[red]Error: {e}[/red]")
+        raise typer.Exit(1)
 
-        diff = mf.diff_sections(old_manifest, sections)
-        targets = set(diff["new"] + diff["changed"] + diff["uncovered"])
-        if not targets:
-            console.print("[green]Deck is already up to date with the note.[/green]")
-            return
 
-        console.print(f"[cyan]Regenerating {len(targets)} section(s): {', '.join(sorted(targets))}[/cyan]")
-        generator = FlashcardGenerator(
-            config.anthropic_api_key,
-            config.model,
-            provider=config.provider,
-            ollama_base_url=config.ollama_base_url,
-            validate=validate
-        )
-        new_cards = generator.generate_flashcards_from_sections(
-            [s for s in sections if s["heading"] in targets],
-            page_data['title'],
-            hierarchy=page_data.get('hierarchy', []),
-            assets=parser.assets
-        )
+@app.command()
+def generate_md(
+    path: str = typer.Argument(..., help="Directory (or single .md file) of Obsidian/markdown notes"),
+    output: str = typer.Option(None, "--output", "-o", help="Output file path (default: decks/<folder>_md.apkg)"),
+    cards_per_concept: int = typer.Option(3, "--cards", "-c", help="Number of cards per concept"),
+    deck_name: str = typer.Option(None, "--deck-name", "-d", help="Custom deck name (default: folder name)"),
+    provider: str = typer.Option("ollama", "--provider", "-p", help="AI provider: 'ollama' (default) or 'claude'"),
+    validate: bool = typer.Option(True, "--validate/--no-validate", help="LLM validation pass on generated cards (Ollama only)"),
+):
+    """Generate flashcards from a directory of markdown (Obsidian) notes.
 
-        kept_cards = [
-            mf.card_from_dict(c)
-            for s in old_manifest["sections"] if s["heading"] not in targets
-            for c in s["cards"]
-        ]
-        flashcards = kept_cards + new_cards
-        console.print(f"[green]✓[/green] {len(kept_cards)} kept + {len(new_cards)} regenerated")
+    Every .md file under the directory (recursively) is incorporated into one
+    deck. Code blocks and images become [CODE n]/[FIGURE n] assets.
+    """
+    console.print(Panel.fit(
+        "[bold cyan]FlashyGen[/bold cyan] - Markdown (Obsidian) to Anki Flashcard Generator",
+        border_style="cyan"
+    ))
 
-        output_file = AnkiExporter().create_deck(
-            flashcards,
-            deck_name or page_data['title'],
-            output,
-            assets=parser.assets,
-            page_id=page_data['id']
-        )
-        new_manifest = mf.build_manifest(
-            page_data['id'], page_data['title'], sections, flashcards, parser.assets
-        )
-        mf.write_manifest(new_manifest, output_file)
-        _print_coverage(mf.coverage(new_manifest))
-        console.print("[green]Re-import the deck in Anki — existing cards update in place.[/green]")
+    config = _resolve_config(provider)
 
+    try:
+        page_data, parser, sections = section_markdown(path)
+        _run_generate(page_data, parser, sections, output, cards_per_concept, deck_name, config, validate)
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Operation cancelled by user[/yellow]")
+        raise typer.Exit(0)
+    except Exception as e:
+        console.print(f"\n[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def check_md(
+    path: str = typer.Argument(..., help="Directory (or single .md file) of markdown notes"),
+    manifest_path: str = typer.Option(None, "--manifest", "-m", help="Deck manifest (default: decks/<folder>.manifest.json)"),
+):
+    """Compare an existing deck's manifest against the current markdown notes.
+
+    Same as `check`, but sources sections from the markdown directory instead
+    of a Notion page. No LLM calls.
+    """
+    page_data, parser, sections = section_markdown(path)
+    _run_check(page_data, parser, sections, manifest_path)
+
+
+@app.command()
+def update_md(
+    path: str = typer.Argument(..., help="Directory (or single .md file) of markdown notes"),
+    manifest_path: str = typer.Option(None, "--manifest", "-m", help="Deck manifest (default: decks/<folder>.manifest.json)"),
+    output: str = typer.Option(None, "--output", "-o", help="Output file path"),
+    deck_name: str = typer.Option(None, "--deck-name", "-d", help="Custom deck name (default: folder name)"),
+    provider: str = typer.Option("ollama", "--provider", "-p", help="AI provider: 'ollama' (default) or 'claude'"),
+    validate: bool = typer.Option(True, "--validate/--no-validate", help="LLM validation pass on generated cards (Ollama only)"),
+):
+    """Regenerate cards for changed/new/uncovered sections of markdown notes.
+
+    Same as `update`, but sources sections from the markdown directory instead
+    of a Notion page.
+    """
+    config = get_config(provider)
+    valid, message = config.validate()
+    if not valid:
+        console.print(f"[red]Configuration error: {message}[/red]")
+        raise typer.Exit(1)
+
+    try:
+        page_data, parser, sections = section_markdown(path)
+        _run_update(page_data, parser, sections, manifest_path, output, deck_name, config, validate)
     except typer.Exit:
         raise
     except KeyboardInterrupt:

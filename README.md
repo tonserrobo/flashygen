@@ -1,6 +1,6 @@
 # FlashyGen
 
-Generate Anki flashcards from Notion pages using AI.
+Generate Anki flashcards from Notion pages **or** Obsidian/markdown note directories using AI.
 
 Automatically creates diverse flashcards with proper syntax highlighting for code examples, supporting both local (Ollama) and cloud (Claude) AI providers.
 
@@ -80,17 +80,34 @@ Regenerates cards only for new/changed/uncovered sections, keeps everything else
 --manifest, -m               # Manifest path (check/update; default: decks/<title>.manifest.json)
 ```
 
-**Examples:**
+**All options**
 ```bash
-# Use Claude instead of Ollama
-python main.py generate <url> -p claude
-
-# Faster generation without the validation pass
-python main.py generate <url> --no-validate
-
-# All options
 python main.py generate <url> -p claude -o deck.apkg -c 4 -d "Python Study"
 ```
+
+## Markdown / Obsidian Notes
+
+Instead of a Notion page, point FlashyGen at a directory of markdown notes.
+Every `.md` file under the directory (recursively) is incorporated into a
+single deck; the folder name becomes the deck title. Hidden (dot-prefixed)
+files and folders are skipped.
+
+```bash
+# Generate a deck from all .md files in ./notes (recursive)
+python main.py generate-md ./notes
+
+# Single file
+python main.py generate-md ./notes/python.md
+
+# Check / update a markdown deck (same semantics as Notion check/update)
+python main.py check-md ./notes
+python main.py update-md ./notes
+```
+
+Markdown code blocks and images are pulled into the same asset pipeline as
+Notion — fenced code becomes `[CODE n]` (with cloze cards and byte-exact
+export), images become `[FIGURE n]` and are embedded in the deck. YAML
+frontmatter is stripped before sectioning.
 
 ## Troubleshooting
 
