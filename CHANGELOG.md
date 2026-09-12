@@ -3,6 +3,28 @@
 All notable changes to FlashyGen are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## [0.2.4] - 2026-09-12
+
+CLI and markdown-loader robustness (issues [#19](https://github.com/tonserrobo/flashygen/issues/19),
+[#24](https://github.com/tonserrobo/flashygen/issues/24),
+[#25](https://github.com/tonserrobo/flashygen/issues/25),
+[#27](https://github.com/tonserrobo/flashygen/issues/27)).
+
+### Fixed
+- **UTF-8 forced on stdio at startup** (#19): `python main.py ... > log` on Windows
+  crashed with `UnicodeEncodeError` because redirected stdout falls back to
+  cp1252, which can't encode rich's ✓/⚠ glyphs. `main()` now reconfigures
+  stdout/stderr to UTF-8.
+- **Command cards no longer all under recall** (#27): a card whose answer IS code
+  (a bare `[CODE n]` citation or a fenced block) is reclassified as `command` by
+  the quality gate, so exact-syntax facts surface as command cards rather than
+  being lumped under recall.
+
+### Notes
+- Mermaid/diagram fences routed to the figure registry (#24) and nested in-note
+  H1s releveled to H2 (#25) were already implemented and tested; this release
+  just closes them.
+
 ## [0.2.3] - 2026-09-12
 
 Card-content fixes driven by reviewing the Variables & Constants deck
@@ -24,10 +46,6 @@ Card-content fixes driven by reviewing the Variables & Constants deck
   valid blanks, a recall card citing the asset is generated instead of silently
   dropping the content. The deck-level dedupe also refuses to drop the last card
   of a section, so a redundant note can never surface as an uncovered section.
-
-### Notes
-- Command/troubleshoot card types remain under-represented by the Ollama model
-  on this deck (#27) — still open.
 
 ## [0.2.2] - 2026-07-03
 

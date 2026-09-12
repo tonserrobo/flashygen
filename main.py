@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """FlashyGen CLI - Generate flashcards from Notion pages."""
 
+import sys
 import typer
 from pathlib import Path
 from rich.console import Console
@@ -473,7 +474,23 @@ def setup():
 
 def main():
     """Main entry point."""
+    force_utf8_stdio()
     app()
+
+
+def force_utf8_stdio() -> None:
+    """Make rich's ✓/⚠ glyphs safe under redirected stdout on Windows (issue #19).
+
+    When stdout is piped to a file, Windows falls back to the cp1252 codec,
+    which cannot encode the glyphs rich prints — the whole run crashes with
+    UnicodeEncodeError. Reconfiguring to UTF-8 avoids that.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except Exception:
+            # No reconfigure support (e.g. some test harnesses) — nothing to do.
+            pass
 
 
 if __name__ == "__main__":

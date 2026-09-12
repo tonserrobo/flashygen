@@ -612,6 +612,13 @@ def _quality_gate(
         front, back = card.front, card.back
         _extract_embedded_explainer(card)
         front, back = card.front, card.back
+        # A card whose answer IS code is really a syntax card — reclassify it
+        # so exact-syntax facts aren't all lumped under recall (issue #27).
+        if card.card_type not in _CODE_REQUIRED_TYPES and (
+            re.fullmatch(r"\s*\[CODE \d+\]\s*", back)
+            or back.lstrip().startswith("```")
+        ):
+            card.card_type = "command"
         has_code = "```" in back or "[CODE" in back or "`" in back
         if card.card_type in _CODE_REQUIRED_TYPES and not has_code:
             continue

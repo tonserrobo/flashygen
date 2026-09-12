@@ -59,6 +59,19 @@ def test_gate_keeps_substantial_recall_card():
     assert len(kept) == 1 and dropped == 0
 
 
+def test_gate_reclassifies_code_answer_as_command():
+    """A recall card whose answer is just a code asset is really a syntax card (issue #27)."""
+    card = Flashcard("What does this code show?", "[CODE 11]", card_type="recall", code_ref="CODE 11")
+    kept, _ = _quality_gate([card], assets=[{"token": "CODE 11", "kind": "code", "language": "cpp", "content": "const int x = 42;"}])
+    assert kept[0].card_type == "command"
+
+
+def test_gate_keeps_prose_recall_card_as_recall():
+    card = Flashcard("What is a variable?", "A named memory location whose value can change.", card_type="recall")
+    kept, _ = _quality_gate([card])
+    assert kept[0].card_type == "recall"
+
+
 def test_gate_moves_embedded_explainer_out_of_back():
     """A model that appends 'Explainer:' to the answer must not leave it there (issue #28)."""
     card = Flashcard(

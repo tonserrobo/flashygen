@@ -102,10 +102,12 @@ def test_cloze_backfill_falls_back_to_recall_when_no_blanks(monkeypatch):
     monkeypatch.setattr(fg, "_generate_code_cloze", lambda client, asset, context="": None)
     content = "Replication setup:\n[CODE 1]\n```cpp\n" + CODE + "\n```"
     cards = gen.generate_flashcards(content, "T", assets=ASSETS)
-    recall = [c for c in cards if c.card_type == "recall"]
-    assert len(recall) == 1
-    assert recall[0].code_ref == "CODE 1" and recall[0].back == "[CODE 1]"
-    assert "Replication setup:" in recall[0].front
+    fallback = [c for c in cards if c.code_ref == "CODE 1"]
+    assert len(fallback) == 1
+    # a code-answer card is reclassified to "command" by the quality gate (issue #27)
+    assert fallback[0].card_type == "command"
+    assert fallback[0].back == "[CODE 1]"
+    assert "Replication setup:" in fallback[0].front
 
 
 def test_generate_backfills_cloze_for_uncited_code(monkeypatch):
