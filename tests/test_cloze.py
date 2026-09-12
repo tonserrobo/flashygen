@@ -73,6 +73,41 @@ def test_dedicated_cloze_returns_none_when_nothing_valid():
     assert _generate_code_cloze(_FakeOllama([]), ASSETS[0]) is None
 
 
+def test_cloze_front_falls_back_to_context_when_no_hint():
+    """No hint from the model -> front describes the code from the prose (issue #26)."""
+    client = _FakeOllama([{"blanks": ["ReplicatedUsing"]}])
+    card = _generate_code_cloze(client, ASSETS[0], context="The code demonstrates a replicated stamina property.")
+    assert card.front == "The code demonstrates a replicated stamina property."
+
+
+def test_cloze_front_keeps_generic_fallback_when_context_short():
+    client = _FakeOllama([{"blanks": ["ReplicatedUsing"]}])
+    card = _generate_code_cloze(client, ASSETS[0], context="Setup:")
+    assert card.front == "Complete the code (CODE 1)"
+
+
+def test_cloze_front_skips_headings_and_table_rows():
+    """A table/heading in the context must not become the card front (issue #26)."""
+    ctx = "### Scope & Lifetime\n\n| Scope | Visibility |\n|-------|-----------|\n| Block | Local |\n\nThe code shows a persistent local counter."
+    from flashygen.flashcard_generator import _front_from_context
+    front = _front_from_context(ctx, "CODE 6")
+    assert front == "The code shows a persistent local counter."
+
+
+def test_cloze_backfill_falls_back_to_recall_when_no_blanks(monkeypatch):
+    """A code asset the cloze call can't blank still gets a card (issue #29)."""
+    from flashygen import flashcard_generator as fg
+    gen = FlashcardGenerator(None, provider="ollama", validate=False)
+    gen.ollama = _FakeOllama([])
+    monkeypatch.setattr(fg, "_generate_code_cloze", lambda client, asset, context="": None)
+    content = "Replication setup:\n[CODE 1]\n```cpp\n" + CODE + "\n```"
+    cards = gen.generate_flashcards(content, "T", assets=ASSETS)
+    recall = [c for c in cards if c.card_type == "recall"]
+    assert len(recall) == 1
+    assert recall[0].code_ref == "CODE 1" and recall[0].back == "[CODE 1]"
+    assert "Replication setup:" in recall[0].front
+
+
 def test_generate_backfills_cloze_for_uncited_code(monkeypatch):
     """Every [CODE n] in a section gets a cloze card even when the main call cites none."""
     from flashygen import flashcard_generator as fg

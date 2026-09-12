@@ -62,6 +62,20 @@ def test_cloze_cards_are_not_candidates():
     assert client.prompts == []  # one Q/A card — nothing to compare, no call
 
 
+def test_dedupe_never_empties_a_section():
+    """A drop that would leave a section with no card is reverted (issue #29)."""
+    dup_a = DUP_A
+    dup_a.section = "Overview"
+    glossary_dup = Flashcard(
+        "Glossary: what is the purpose of `#pragma once`?",
+        "Include this header at most once per translation unit.",
+    )
+    glossary_dup.section = "Glossary"
+    client = _FakeOllama([{"keep": 1, "drop": 2}])  # judge flags the Glossary card as a dup
+    kept = _dedupe_cards_llm(client, [dup_a, glossary_dup])
+    assert glossary_dup in kept  # Glossary must keep its only card
+
+
 def test_sections_pipeline_dedupes_across_sections(monkeypatch):
     """The whole point: per-section _quality_gate can't see other sections."""
     from flashygen import flashcard_generator as fg

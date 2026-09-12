@@ -3,6 +3,32 @@
 All notable changes to FlashyGen are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## [0.2.3] - 2026-09-12
+
+Card-content fixes driven by reviewing the Variables & Constants deck
+(issues [#26](https://github.com/tonserrobo/flashygen/issues/26),
+[#28](https://github.com/tonserrobo/flashygen/issues/28),
+[#29](https://github.com/tonserrobo/flashygen/issues/29)).
+
+### Fixed
+- **Explainer no longer leaks into the answer** (#28): a model that appends an
+  `Explainer:` block to the back now has that text lifted into the explainer
+  field (or stripped, if the field is already set) instead of rendering an
+  orphaned "Explainer:" prefix as part of the answer.
+- **Cloze fronts derived from the surrounding prose** (#26): when the cloze call
+  returns no hint, the front is the first descriptive sentence of the code's
+  context rather than the generic "Complete the code (CODE n)". Headings, code
+  fences, table rows, and sentence fragments are skipped; the generic fallback
+  is used only when nothing usable remains.
+- **Every code asset yields a card** (#29): if the per-asset cloze call finds no
+  valid blanks, a recall card citing the asset is generated instead of silently
+  dropping the content. The deck-level dedupe also refuses to drop the last card
+  of a section, so a redundant note can never surface as an uncovered section.
+
+### Notes
+- Command/troubleshoot card types remain under-represented by the Ollama model
+  on this deck (#27) — still open.
+
 ## [0.2.2] - 2026-07-03
 
 Card-content fixes driven by comparing the four UE5 decks against their source Notion pages

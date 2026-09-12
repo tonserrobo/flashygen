@@ -57,3 +57,28 @@ def test_gate_keeps_substantial_recall_card():
     back = "A vector is defined by its direction (where it points) and magnitude (its length)."
     kept, dropped = _quality_gate([Flashcard("What defines a vector?", back, card_type="recall")])
     assert len(kept) == 1 and dropped == 0
+
+
+def test_gate_moves_embedded_explainer_out_of_back():
+    """A model that appends 'Explainer:' to the answer must not leave it there (issue #28)."""
+    card = Flashcard(
+        "What fixed-width types should be used?",
+        "Use the fixed-width types from <cstdint>, such as uint32_t and int64_t, to guarantee a size on every platform.\n\nExplainer: Using these types guarantees a specific number of bits regardless of the platform.",
+        card_type="recall",
+    )
+    kept, _ = _quality_gate([card])
+    assert kept[0].explainer == "Using these types guarantees a specific number of bits regardless of the platform."
+    assert "Explainer:" not in kept[0].back
+    assert kept[0].back == "Use the fixed-width types from <cstdint>, such as uint32_t and int64_t, to guarantee a size on every platform."
+
+
+def test_gate_strips_embedded_explainer_when_field_already_set():
+    card = Flashcard(
+        "Q?",
+        "A sufficiently detailed answer that fully explains the behavior and passes the gate.\n\nExplainer: redundant block",
+        explainer="Real explainer.",
+        card_type="recall",
+    )
+    kept, _ = _quality_gate([card])
+    assert kept[0].explainer == "Real explainer."
+    assert "Explainer:" not in kept[0].back

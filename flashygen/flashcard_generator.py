@@ -209,6 +209,11 @@ class FlashcardGenerator:
                     if cloze:
                         all_cards.append(cloze)
                         console.print(f"[dim]  + cloze card for [{token}][/dim]")
+                    else:
+                        fallback = _code_fallback_card(asset, _asset_context(content, token))
+                        if fallback:
+                            all_cards.append(fallback)
+                            console.print(f"[dim]  + recall card for [{token}] (cloze yielded nothing)[/dim]")
 
         kept, dropped = _quality_gate(all_cards, assets=assets)
         if dropped:
@@ -366,6 +371,43 @@ def _asset_context(content: str, token: str, radius: int = 300) -> str:
     return prose[max(0, idx - radius): idx + len(token) + 2 + radius].strip()
 
 
+def _front_from_context(context: str, token: str) -> str:
+    """Derive a cloze front from the surrounding prose when the model gives no hint.
+
+    Picks the first real prose sentence (≥15 chars) — headings, code fences, and
+    table rows are not descriptions of what the code does. Falls back to the
+    generic "Complete the code" string only when nothing usable remains (issue #26).
+    """
+    ctx = (context or "").strip()
+    if ctx and ctx.lower() != "(none)":
+        cleaned = re.sub(r"^\s{0,3}#{1,6}\s.*$", "", ctx, flags=re.M)
+        cleaned = re.sub(r"^\s*\|.*$", "", cleaned, flags=re.M)
+        cleaned = re.sub(r"^[|\s-]+$", "", cleaned, flags=re.M)
+        cleaned = re.sub(r"```.*?```", "", cleaned, flags=re.S)
+        for sentence in re.split(r"(?<=[.!?])\s+", cleaned):
+            s = sentence.strip()
+            if len(s) >= 15 and "|" not in s and not s.startswith(("#", "-", "`")) and s[0].isupper():
+                return s
+    return f"Complete the code ({token})"
+
+
+def _code_fallback_card(asset: dict, context: str = "") -> Flashcard | None:
+    """Guarantee coverage for a code asset the cloze call could not blank (issue #29).
+
+    The model returned no valid blanks — instead of silently dropping the
+    content, produce a recall card that cites the asset so the code still lands
+    in the deck. The front is the surrounding prose (or the token) and the back
+    is the verbatim code block via the registry.
+    """
+    token = asset["token"]
+    ctx = (context or "").strip()
+    if ctx and ctx.lower() != "(none)":
+        front = _front_from_context(context, token)
+        if front != f"Complete the code ({token})":
+            return Flashcard(front, f"[{token}]", [], card_type="recall", code_ref=token)
+    return Flashcard(f"What does this code do?\n[{token}]", f"[{token}]", [], card_type="recall", code_ref=token)
+
+
 def _generate_code_cloze(client: Any, asset: dict, context: str = "") -> Flashcard | None:
     """One focused model call per code asset → one cloze card (issue #17).
 
@@ -402,7 +444,7 @@ def _generate_code_cloze(client: Any, asset: dict, context: str = "") -> Flashca
         if blanks:
             hint = str(item.get("hint", "")).strip()
             return Flashcard(
-                hint or f"Complete the code ({asset['token']})",
+                hint or _front_from_context(context, asset["token"]),
                 f"[{asset['token']}]",
                 [],
                 card_type="cloze",
@@ -450,6 +492,29 @@ def _parse_raw_cards(raw: list[Any], title: str) -> list[Flashcard]:
 _MIN_BACK_CHARS = 40
 _CODE_REQUIRED_TYPES = {"command", "troubleshoot"}
 _LEAK_MARKERS = ('"front"', '"back"', "JSON array", "recall|command")
+# A small model occasionally appends an "Explainer:" block to the answer
+# instead of filling the explainer field (issue #28). Captures the trailing
+# block so it can be lifted out and dropped from the answer.
+_EMBEDDED_EXPLAINER_RE = re.compile(r"\n{1,2}\s*Explainer:\s*(.+)\Z", re.DOTALL)
+
+
+def _extract_embedded_explainer(card: Flashcard) -> None:
+    """Move an explainer the model baked into the answer back into the field.
+
+    If the explainer field is empty, the trailing "Explainer:" text becomes the
+    explainer; otherwise the stray block is dropped from the answer entirely.
+    """
+    if card.card_type == "cloze" or not card.back:
+        return
+    m = _EMBEDDED_EXPLAINER_RE.search(card.back)
+    if not m:
+        return
+    block = m.group(1).strip()
+    if not block:
+        return
+    if not card.explainer.strip():
+        card.explainer = block
+    card.back = card.back[: m.start()].rstrip()
 
 
 def _normalize(text: str) -> str:
@@ -510,6 +575,15 @@ def _dedupe_cards_llm(client: Any, cards: list[Flashcard]) -> list[Flashcard]:
         if _word_jaccard(keep_card.front + " " + keep_card.back,
                          drop_card.front + " " + drop_card.back) >= 0.15:
             drop.add(qa[d - 1][0])
+    # A drop that would leave a whole section with no card is reverted — dedupe
+    # must never surface a gap as "uncovered" content (issue #29).
+    section_qa: dict[str, set[int]] = {}
+    for i, c in enumerate(cards):
+        if c.card_type != "cloze":
+            section_qa.setdefault(getattr(c, "section", "") or "", set()).add(i)
+    for indices in section_qa.values():
+        if indices and indices <= drop:
+            drop.discard(min(indices))
     return [c for i, c in enumerate(cards) if i not in drop]
 
 
@@ -535,6 +609,8 @@ def _quality_gate(
             kept.append(card)
             continue
 
+        front, back = card.front, card.back
+        _extract_embedded_explainer(card)
         front, back = card.front, card.back
         has_code = "```" in back or "[CODE" in back or "`" in back
         if card.card_type in _CODE_REQUIRED_TYPES and not has_code:
