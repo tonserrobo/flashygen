@@ -3,6 +3,33 @@
 All notable changes to FlashyGen are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## [0.2.5] - 2026-09-24
+
+Cloze-safety and markdown-cleanliness fixes found while reviewing the
+Pointers & References, Controlling Program Flow, and Variables & Constants decks
+(issues [#33](https://github.com/tonserrobo/flashygen/issues/33),
+[#34](https://github.com/tonserrobo/flashygen/issues/34),
+[#35](https://github.com/tonserrobo/flashygen/issues/35)).
+
+### Fixed
+- **Overlapping cloze blanks no longer nest** (#33): `_build_cloze_note` wrapped
+  blanks with sequential `str.replace(..., 1)`, so a blank that was a substring
+  of an earlier one (`counter`/`count`, `*ptr = 10`/`*ptr`) re-wrapped *inside*
+  the existing cloze — producing invalid `{{c1::{{c2::count}}er}}` notes that
+  Anki rendered as broken deletions. The exporter now computes each blank's
+  first occurrence that does not overlap an already-chosen span and applies
+  wraps right-to-left, so overlapping blanks land on distinct free occurrences.
+- **Braces in cloze blanks rejected** (#34): a blank like `arr[5]{}` was wrapped
+  as `{{c2::arr[5]{}}}` and clipped to `arr[5]{` by Anki's non-greedy parser.
+  Braces are now filtered at generation time (`_clean_blanks`), at the quality
+  gate, and in the exporter, so no cloze can be built over a brace-containing
+  blank.
+- **Notion colour markup stripped from markdown notes** (#35): `~={red}...=~`
+  spans survive copy-as-markdown exports and leaked into section headings and
+  manifest keys (`~={red}Control types =~ (part 1)`). `markdown_loader` now
+  removes them before sectioning, matching the Notion API path which already
+  drops colour annotations.
+
 ## [0.2.4] - 2026-09-12
 
 CLI and markdown-loader robustness (issues [#19](https://github.com/tonserrobo/flashygen/issues/19),

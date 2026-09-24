@@ -4,7 +4,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from flashygen.anki_exporter import AnkiExporter
+from flashygen.anki_exporter import AnkiExporter, _wrap_cloze_blanks
 from flashygen.flashcard_generator import (
     Flashcard,
     FlashcardGenerator,
@@ -205,3 +205,56 @@ def test_exporter_emits_cloze_note_alongside_qa(tmp_path):
     assert "{{c1::ReplicatedUsing}}" in cloze_fields
     assert "float Stamina = 100.f;" in cloze_fields  # rest of code verbatim
     assert "Replication macro" in cloze_fields  # hint shown as context
+
+
+def test_wrap_cloze_blanks_no_overlap_for_substring_blanks():
+    """A later blank that is a substring of an earlier one must wrap the NEXT
+    free occurrence, never nest inside the earlier cloze (issue #33)."""
+    code = "void counter() {\n    static int count = 0;\n    ++count;\n}"
+    out = _wrap_cloze_blanks(code, ["counter", "count"])
+    assert "{{c1::counter}}" in out
+    assert "{{c2::count}}" in out
+    assert "{{c1::{{" not in out  # no nesting
+    assert "}}er}}()" not in out
+
+
+def test_wrap_cloze_blanks_skips_overlapping_ptr_blank():
+    code = "int* ptr = &x;\n\n*ptr = 10;\nstd::cout << *ptr;"
+    out = _wrap_cloze_blanks(code, ["*ptr = 10", "*ptr"])
+    assert "{{c1::*ptr = 10}}" in out
+    assert "{{c2::*ptr}};" in out
+    assert "{{c1::{{" not in out
+
+
+def test_wrap_cloze_blanks_skips_brace_blanks():
+    """Braces in a blank are dropped — Anki's parser clips at the first '}}' (issue #34)."""
+    code = "int b{};\nint arr[5]{};\nint x = 1;"
+    out = _wrap_cloze_blanks(code, ["arr[5]{}", "x", "p{}"])
+    assert "{{c1::x}}" in out  # the safe blank is wrapped
+    assert "{{c" not in out.replace("{{c1::x}}", "")  # brace blanks never wrapped
+
+
+def test_generation_filters_brace_and_duplicate_blanks():
+    """_generate_code_cloze rejects braces/dupes before building the card (issues #33/#34)."""
+    from flashygen.flashcard_generator import _generate_code_cloze
+    client = _FakeOllama([{"blanks": ["{x}", "ReplicatedUsing", "ReplicatedUsing"], "hint": "h"}])
+    card = _generate_code_cloze(client, ASSETS[0])
+    assert card.blanks == ["ReplicatedUsing"]
+
+
+def test_exported_deck_never_contains_nested_cloze(tmp_path):
+    """Overlapping blanks export cleanly — no {{c1::{{c2::...}}}} corruption."""
+    from flashygen.flashcard_generator import _parse_raw_cards
+    code = "void counter() {\n    static int count = 0;\n    ++count;\n}"
+    assets = [{"token": "CODE 1", "kind": "code", "language": "cpp", "content": code}]
+    cloze = _parse_raw_cards([{"type": "cloze", "code_ref": "CODE 1", "blanks": ["counter", "count"], "hint": "h"}], "T")[0]
+    cloze.tags = ["t"]
+    out = AnkiExporter().create_deck([cloze], "Cloze Overlap", str(tmp_path / "c.apkg"), assets=assets)
+    with zipfile.ZipFile(out) as z, tempfile.TemporaryDirectory() as td:
+        z.extract("collection.anki2", td)
+        con = sqlite3.connect(Path(td) / "collection.anki2")
+        fields = [r[0] for r in con.execute("SELECT flds FROM notes").fetchall()]
+        con.close()
+    note = next(f for f in fields if "{{c1::" in f)
+    assert "{{c1::counter}}" in note and "{{c2::count}}" in note
+    assert "{{c1::{{" not in note and "{{c2::{{" not in note

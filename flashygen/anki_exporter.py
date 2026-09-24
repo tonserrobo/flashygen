@@ -23,6 +23,38 @@ def _stable_id(seed: str) -> int:
     return (1 << 30) + int(hashlib.sha1(seed.encode("utf-8")).hexdigest()[:8], 16) % (1 << 30)
 
 
+def _wrap_cloze_blanks(code: str, blanks: list[str]) -> str:
+    """Wrap each blank in ``{{cN::...}}`` at its first occurrence that does not
+    overlap an earlier wrap.
+
+    Blank positions are computed on the original string and replacements applied
+    right-to-left, so a later blank can never land inside an already-wrapped span
+    (``counter``/``count`` or ``*ptr = 10``/``*ptr`` produced ``{{c1::{{c2::...}}}}``
+    before — issue #33). Blanks containing braces are skipped because Anki's
+    non-greedy parser clips a deletion at the first ``}}`` (issue #34).
+    """
+    chosen: list[tuple[int, int, str]] = []
+    for blank in blanks:
+        if not blank or "{" in blank or "}" in blank:
+            continue
+        escaped = html.escape(blank)
+        start = 0
+        while True:
+            pos = code.find(escaped, start)
+            if pos == -1:
+                break
+            end = pos + len(escaped)
+            if all(end <= s or pos >= e for s, e, _ in chosen):
+                chosen.append((pos, end, escaped))
+                break
+            start = pos + 1
+    numbered = [(i, pos, end, escaped) for i, (pos, end, escaped) in enumerate(sorted(chosen), 1)]
+    for i, pos, end, escaped in reversed(numbered):
+        marker = f"{{{{c{i}::{escaped}}}}}"
+        code = code[:pos] + marker + code[end:]
+    return code
+
+
 class AnkiExporter:
     """Export flashcards to Anki .apkg format."""
 
@@ -380,9 +412,7 @@ class AnkiExporter:
         if asset is None:
             return None
         code = html.escape(asset["content"])
-        for i, blank in enumerate(flashcard.blanks, 1):
-            escaped = html.escape(blank)
-            code = code.replace(escaped, f"{{{{c{i}::{escaped}}}}}", 1)
+        code = _wrap_cloze_blanks(code, flashcard.blanks)
         code = code.replace("\n", "<br>")
         text = (
             f'{html.escape(flashcard.front)}<br>'

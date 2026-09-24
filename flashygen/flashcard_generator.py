@@ -342,6 +342,26 @@ Return ONLY a valid JSON array. Each object: "front", "back", "type", and option
 
 _DIAGRAM_LANGUAGES = {"mermaid", "plantuml", "dot", "graphviz"}
 
+
+def _clean_blanks(blanks: list[str] | None, content: str | None = None) -> list[str]:
+    """Keep only blanks that are safe for Anki's cloze syntax.
+
+    Braces are rejected — the non-greedy parser clips a deletion at the first
+    ``}}``, so ``arr[5]{}`` renders as ``arr[5]{`` (issue #34). Blanks must be
+    exact substrings of the code and duplicates are dropped (issue #33).
+    """
+    seen: set[str] = set()
+    clean: list[str] = []
+    for b in blanks or []:
+        b = str(b).strip()
+        if not b or b in seen or "{" in b or "}" in b:
+            continue
+        if content is None or b in content:
+            seen.add(b)
+            clean.append(b)
+    return clean
+
+
 _CLOZE_PROMPT = """From this {language} code, pick 1 to 3 short substrings worth memorising —
 a specifier, macro name, function name, or key argument. Copy each EXACTLY as it
 appears in the code. Never pick whole lines.
@@ -440,7 +460,7 @@ def _generate_code_cloze(client: Any, asset: dict, context: str = "") -> Flashca
                 [],
                 card_type="troubleshoot",
             )
-        blanks = [str(b) for b in item.get("blanks", []) if str(b) and str(b) in asset["content"]]
+        blanks = _clean_blanks(item.get("blanks", []), asset["content"])
         if blanks:
             hint = str(item.get("hint", "")).strip()
             return Flashcard(
@@ -466,7 +486,7 @@ def _parse_raw_cards(raw: list[Any], title: str) -> list[Flashcard]:
 
         if card_type == "cloze":
             code_ref = str(item.get("code_ref", "")).strip()
-            blanks = [str(b).strip() for b in item.get("blanks", []) if str(b).strip()]
+            blanks = _clean_blanks(item.get("blanks", []))
             hint = str(item.get("hint", "")).strip()
             if code_ref and blanks:
                 cards.append(Flashcard(
@@ -604,8 +624,8 @@ def _quality_gate(
             # cloze cards live or die by their registry reference, nothing else
             if assets is not None:
                 asset = next((a for a in assets if a["token"] == card.code_ref), None)
-                if asset is None or any(b not in asset["content"] for b in card.blanks):
-                    continue  # hallucinated ref or blank
+                if asset is None or _clean_blanks(card.blanks, asset["content"]) != card.blanks:
+                    continue  # hallucinated ref, blank, or unsafe brace blank
             kept.append(card)
             continue
 

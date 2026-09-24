@@ -134,3 +134,17 @@ def test_deterministic_page_id(tmp_path):
     id1 = section_markdown(tmp_path)[0]["id"]
     id2 = section_markdown(tmp_path)[0]["id"]
     assert id1 == id2
+
+
+def test_notion_colour_markup_stripped(tmp_path):
+    """Notion's ~={red}...=~ colour spans must not leak into headings or prose (issue #35)."""
+    _write(
+        tmp_path,
+        "note.md",
+        "# Notes\n\n## ~={red}Control types =~ (part 1)\n\nSome ~={blue}highlighted=~ text.",
+    )
+    loader = MarkdownNoteLoader()
+    content, _ = loader.load_directory(tmp_path)
+    assert "~=" not in content
+    assert "## Control types (part 1)" in content
+    assert "Some highlighted text." in content

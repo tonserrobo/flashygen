@@ -28,6 +28,9 @@ _FENCE_RE = re.compile(r"```([\w+#.-]*)")
 _IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
 _FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
 _H1_RE = re.compile(r"^#\s+(.+)$")
+# Notion's text-colour markup (`~={red}...=~`) survives copy-as-markdown exports
+# and would otherwise leak into headings, section names, and card text (issue #35).
+_NOTION_COLOR_RE = re.compile(r"~=\{[^{}]*\}(.*?)=~", re.DOTALL)
 # Diagram fence languages are illustrations, not code to memorise. They are
 # registered as figures (not code) so they never become cloze targets and never
 # consume CODE n slots (mirrors flashcard_generator._DIAGRAM_LANGUAGES).
@@ -137,11 +140,22 @@ class MarkdownNoteLoader:
         for file in self.files:
             raw = file.read_text(encoding="utf-8")
             raw = _FRONTMATTER_RE.sub("", raw)
+            raw = self._strip_notion_markup(raw)
             raw = self._relevel_internal_h1(raw)
             content = self._extract_assets(raw).strip()
             title = self._note_title(file)
             parts.append(f"# {title}\n\n{content}")
         return "\n\n".join(parts), self.files
+
+    @staticmethod
+    def _strip_notion_markup(text: str) -> str:
+        """Remove Notion colour spans (`~={red}text=~`) from markdown content.
+
+        Colour annotations are dropped on the Notion API path, but the markdown
+        path would otherwise carry the raw markup into headings and section
+        names (issue #35).
+        """
+        return _NOTION_COLOR_RE.sub(lambda m: m.group(1).strip(), text)
 
     @staticmethod
     def _relevel_internal_h1(text: str) -> str:
