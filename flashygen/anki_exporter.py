@@ -527,13 +527,15 @@ class AnkiExporter:
 
         text = re.sub(r'`([^`]+)`', format_inline_code, text)
 
-        # Convert bold (**text** or __text__)
-        text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
-        text = re.sub(r'__(.+?)__', r'<strong>\1</strong>', text)
-
-        # Convert italic (*text* or _text_) - but not in URLs or after backslashes
-        text = re.sub(r'(?<!\\)\*([^*]+?)\*', r'<em>\1</em>', text)
-        text = re.sub(r'(?<!\\)_([^_]+?)_', r'<em>\1</em>', text)
+        # Convert bold (**text** or __text__) and italic (*text* or _text_) with
+        # CommonMark-style flanking: a * or _ inside a word is literal, not
+        # emphasis. C++ identifiers written without backticks (std::out_of_range,
+        # char* argv, THIRD_PARTY_INCLUDES_START, *ptr) were being wrapped in
+        # <em>/<strong> by the old no-flanking regexes — issue #32.
+        text = re.sub(r'(?<![\\\w])\*\*(?=\S)(.+?)(?<=\S)\*\*(?!\w)', r'<strong>\1</strong>', text)
+        text = re.sub(r'(?<![\\\w])__(?=\S)(.+?)(?<=\S)__(?!\w)', r'<strong>\1</strong>', text)
+        text = re.sub(r'(?<![\\\w])\*(?=\S)([^*]+?)(?<=\S)\*(?!\w)', r'<em>\1</em>', text)
+        text = re.sub(r'(?<![\\\w])_(?=\S)([^_]+?)(?<=\S)_(?!\w)', r'<em>\1</em>', text)
 
         # Convert remaining line breaks to <br> (but not in code blocks)
         text = text.replace('\n', '<br>')

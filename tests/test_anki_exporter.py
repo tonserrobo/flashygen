@@ -25,3 +25,28 @@ def test_default_output_goes_to_decks_dir(tmp_path, monkeypatch):
     result = AnkiExporter().create_deck([Flashcard("Q?", "A.")], "Test Deck")
     assert Path(result) == Path("decks") / "Test_Deck.apkg"
     assert (tmp_path / "decks" / "Test_Deck.apkg").exists()
+
+
+def test_intraword_code_emphasis_not_mangled():
+    """* and _ inside identifiers are literal, not markdown emphasis (issue #32)."""
+    out = AnkiExporter()._format_content(
+        "Use std::out_of_range and char* argv. "
+        "Macros: THIRD_PARTY_INCLUDES_START and DRAW_LINE. "
+        "Recall *this is italic* and **this is bold**."
+    )
+    assert "std::out_of_range" in out
+    assert "char* argv" in out
+    assert "THIRD_PARTY_INCLUDES_START" in out and "DRAW_LINE" in out
+    assert "<em>this is italic</em>" in out
+    assert "<strong>this is bold</strong>" in out
+
+
+def test_pointer_and_underscore_identifiers_survive_formatting():
+    """C++ code written without backticks must not be italicised (issue #32)."""
+    out = AnkiExporter()._format_content(
+        "std::to_string(value) and (Type* name); dereference (*ptr); std::to_string(42)."
+    )
+    assert "std::to_string(value)" in out
+    assert "(Type* name)" in out
+    assert "(*ptr)" in out
+    assert "<em>" not in out

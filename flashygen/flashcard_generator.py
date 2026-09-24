@@ -197,6 +197,15 @@ class FlashcardGenerator:
             # main prompt's single card to also be a cloze.
             if assets:
                 covered = {c.code_ref for c in all_cards if c.card_type == "cloze"}
+                # Code assets a Q/A card already presents in full need no extra
+                # formatted code-block card (issue #31).
+                qa_cites: set[str] = set()
+                for c in all_cards:
+                    if c.card_type == "cloze":
+                        continue
+                    qa_cites.update(re.findall(r"\[(CODE \d+)\]", c.front + c.back))
+                    if c.code_ref:
+                        qa_cites.add(c.code_ref)
                 for token in dict.fromkeys(re.findall(r"\[(CODE \d+)\]", content)):
                     if token in covered:
                         continue
@@ -209,6 +218,13 @@ class FlashcardGenerator:
                     if cloze:
                         all_cards.append(cloze)
                         console.print(f"[dim]  + cloze card for [{token}][/dim]")
+                        # Alongside the cloze, surface the full formatted block as a
+                        # command card when nothing else in the section does (issue #31).
+                        if cloze.card_type == "cloze" and token not in qa_cites:
+                            cmd = _code_command_card(asset, _asset_context(content, token))
+                            if cmd:
+                                all_cards.append(cmd)
+                                console.print(f"[dim]  + code card for [{token}][/dim]")
                     else:
                         fallback = _code_fallback_card(asset, _asset_context(content, token))
                         if fallback:
@@ -288,6 +304,10 @@ RULES:
 - Every distinct command, error, setting, or code snippet must get its own card.
 - Lines starting with | are table rows — a dense list of facts. Make one card per
   non-obvious row: the row's decision, value, or purpose is the answer.
+- When a section's teaching point IS a code snippet (a call, declaration, or pattern
+  worth memorising), produce a "command" card whose back is the bare [CODE n] token —
+  the full formatted code block is the answer. These complement the cloze cards that
+  are generated for the same code (issue #31).
 - Card types:
     "recall"      — definition or fact ("What is X?")
     "command"     — exact syntax or step ("How do you X?" / back includes full code/command)
@@ -426,6 +446,27 @@ def _code_fallback_card(asset: dict, context: str = "") -> Flashcard | None:
         if front != f"Complete the code ({token})":
             return Flashcard(front, f"[{token}]", [], card_type="recall", code_ref=token)
     return Flashcard(f"What does this code do?\n[{token}]", f"[{token}]", [], card_type="recall", code_ref=token)
+
+
+def _code_command_card(asset: dict, context: str = "") -> Flashcard | None:
+    """A formatted code-block card shown alongside the cloze (issue #31).
+
+    The answer is the full registered code block via the bare ``[CODE n]`` token.
+    The front is framed as recalling/producing the code and derived from the
+    surrounding prose so it reads as a real recall question, distinct from the
+    cloze front (cloze cards never enter the front-dedupe set, so no collision).
+    """
+    token = asset["token"]
+    base = _front_from_context(context, token)
+    if base == f"Complete the code ({token})":
+        return Flashcard(
+            f"Recall the exact code in {token}:", f"[{token}]", [], card_type="command", code_ref=token
+        )
+    if base.lower().startswith("the code"):
+        front = "Recall the code that " + base[8:].strip()
+    else:
+        front = f"Recall the code shown: {base}"
+    return Flashcard(front, f"[{token}]", [], card_type="command", code_ref=token)
 
 
 def _generate_code_cloze(client: Any, asset: dict, context: str = "") -> Flashcard | None:

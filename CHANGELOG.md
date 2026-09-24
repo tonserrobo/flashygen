@@ -3,6 +3,28 @@
 All notable changes to FlashyGen are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## [0.2.6] - 2026-09-24
+
+Card-presentation fixes driven by reviewing the C++ decks
+(issues [#31](https://github.com/tonserrobo/flashygen/issues/31),
+[#32](https://github.com/tonserrobo/flashygen/issues/32)).
+
+### Fixed
+- **Code identifiers no longer italicised** (#32): `_format_content`'s bold/italic
+  regexes matched any `*...*`/`_..._` pair, so C++ written without backticks
+  (`std::out_of_range`, `char* argv`, `THIRD_PARTY_INCLUDES_START`, `*ptr`,
+  `std::to_string(value)`) was wrapped in `<em>`/`<strong>` — the "only some text
+  coloured or italics" symptom on cards. Emphasis is now CommonMark-flanking-aware:
+  a `*` or `_` inside a word is literal, so identifiers survive while genuine
+  `*italic*`/`**bold**` still convert.
+
+### Changed
+- **Formatted code-block cards generated alongside cloze** (#31): every code asset
+  that gets a cloze card now also gets a `command` card whose answer is the full
+  registered code block (via `[CODE n]`), unless a Q/A card already presents it.
+  The main generation prompt also steers command cards for code-snippet teaching
+  points. Code shown as a mistake still becomes a troubleshoot card instead.
+
 ## [0.2.5] - 2026-09-24
 
 Cloze-safety and markdown-cleanliness fixes found while reviewing the

@@ -258,3 +258,74 @@ def test_exported_deck_never_contains_nested_cloze(tmp_path):
     note = next(f for f in fields if "{{c1::" in f)
     assert "{{c1::counter}}" in note and "{{c2::count}}" in note
     assert "{{c1::{{" not in note and "{{c2::{{" not in note
+
+
+def test_backfill_adds_full_code_command_card(monkeypatch):
+    """A cloze asset also gets a formatted code-block command card (issue #31)."""
+    from flashygen import flashcard_generator as fg
+    gen = FlashcardGenerator(None, provider="ollama", validate=False)
+    gen.ollama = _FakeOllama([{
+        "front": "Q?", "back": "A sufficiently long answer about stamina replication.", "type": "recall",
+    }])
+    monkeypatch.setattr(fg, "_generate_code_cloze", lambda client, asset, context="": Flashcard(
+        "The code shows a persistent local counter.", f"[{asset['token']}]", [],
+        card_type="cloze", code_ref=asset["token"], blanks=["Stamina"],
+    ))
+    content = ("Replication setup:\nThe macro is required for replication to work correctly.\n"
+               "[CODE 1]\n```cpp\n" + CODE + "\n```")
+    cards = gen.generate_flashcards(content, "T", assets=ASSETS)
+    types = {c.card_type for c in cards}
+    assert "cloze" in types and "command" in types
+    cmd = next(c for c in cards if c.card_type == "command")
+    assert cmd.back == "[CODE 1]" and cmd.code_ref == "CODE 1"
+    assert "Recall the code" in cmd.front
+
+
+def test_no_extra_command_card_when_qa_already_cites_asset(monkeypatch):
+    """The formatted code-block card is skipped if a Q/A card already cites it (issue #31)."""
+    from flashygen import flashcard_generator as fg
+    gen = FlashcardGenerator(None, provider="ollama", validate=False)
+    gen.ollama = _FakeOllama([{
+        "front": "How do you mark it?", "back": "Use [CODE 1]. A long enough answer.", "type": "command",
+    }])
+    monkeypatch.setattr(fg, "_generate_code_cloze", lambda client, asset, context="": Flashcard(
+        "hint", f"[{asset['token']}]", [], card_type="cloze", code_ref=asset["token"], blanks=["Stamina"],
+    ))
+    content = "Replication setup:\n[CODE 1]\n```cpp\n" + CODE + "\n```"
+    cards = gen.generate_flashcards(content, "T", assets=ASSETS)
+    commands = [c for c in cards if c.card_type == "command"]
+    assert len(commands) == 1  # the main-gen command card, not an extra one
+    assert commands[0].back == "Use [CODE 1]. A long enough answer."
+
+
+def test_troubleshoot_asset_gets_no_command_card(monkeypatch):
+    """Code presented as a mistake gets the troubleshoot card, not a code-block card (issue #31)."""
+    from flashygen import flashcard_generator as fg
+    gen = FlashcardGenerator(None, provider="ollama", validate=False)
+    gen.ollama = _FakeOllama([{
+        "front": "Q?", "back": "A sufficiently long answer about the naive code.", "type": "recall",
+    }])
+    monkeypatch.setattr(fg, "_generate_code_cloze", lambda client, asset, context="": Flashcard(
+        "What is wrong with this code?\n[CODE 1]", "[CODE 1]\nIt does not compile.",
+        [], card_type="troubleshoot",
+    ))
+    content = "Replication setup:\n[CODE 1]\n```cpp\n" + CODE + "\n```"
+    cards = gen.generate_flashcards(content, "T", assets=ASSETS)
+    assert any(c.card_type == "troubleshoot" for c in cards)
+    assert not any(c.card_type == "command" for c in cards)
+
+
+def test_code_command_card_phrasing():
+    from flashygen.flashcard_generator import _code_command_card
+    asset = ASSETS[0]
+    cmd = _code_command_card(asset, "The code demonstrates a replicated stamina property.")
+    assert cmd.front == "Recall the code that demonstrates a replicated stamina property."
+    assert cmd.back == "[CODE 1]" and cmd.card_type == "command"
+    cmd2 = _code_command_card(asset, "Setup:")
+    assert cmd2.front == "Recall the exact code in CODE 1:"
+
+
+def test_prompt_steers_formatted_code_cards():
+    prompt = _build_ollama_prompt("content", "T")
+    assert "formatted code block is the answer" in prompt
+    assert "cloze" in prompt
