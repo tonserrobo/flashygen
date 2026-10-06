@@ -71,7 +71,7 @@ def _print_coverage(cov: dict):
     for heading in cov["uncovered"]:
         console.print(f"  [yellow]uncovered section:[/yellow] {heading}")
     uncited_code = cov.get("uncited_code", [t for t in cov["uncited_assets"] if t.startswith("CODE")])
-    uncited_figs = [t for t in cov["uncited_assets"] if t.startswith("FIGURE")]
+    uncited_figs = cov.get("uncited_figures", [t for t in cov["uncited_assets"] if t.startswith("FIGURE")])
     for token in uncited_code:
         console.print(f"  [yellow]uncited code asset:[/yellow] [{token}]")
     if uncited_figs:

@@ -389,12 +389,6 @@ Return ONLY a valid JSON array. Each object: "front", "back", "type", and option
 
 _DIAGRAM_LANGUAGES = {"mermaid", "plantuml", "dot", "graphviz"}
 
-# Prose sentences that actually describe the adjacent code, used to give a
-# command card a meaningful front instead of the generic recall template.
-_CODE_DESC_HINTS = (
-    "code", "example", "syntax", "snippet", "method", "function", "class", "macro",
-)
-
 
 def _clean_blanks(blanks: list[str] | None, content: str | None = None) -> list[str]:
     """Keep only blanks that are safe for Anki's cloze syntax.
@@ -481,6 +475,18 @@ def _code_fallback_card(asset: dict, context: str = "") -> Flashcard | None:
     return Flashcard(f"What does this code do?\n[{token}]", f"[{token}]", [], card_type="recall", code_ref=token)
 
 
+def _clean_code_description(text: str) -> bool:
+    """A short, single-line sentence with no embedded asset markers."""
+    t = text.strip()
+    return (
+        bool(t)
+        and len(t) <= 120
+        and "\n" not in t
+        and "[CODE" not in t
+        and "[FIGURE" not in t
+    )
+
+
 def _code_command_card(asset: dict, context: str = "") -> Flashcard | None:
     """A formatted code-block card shown alongside the cloze (issue #31).
 
@@ -489,22 +495,18 @@ def _code_command_card(asset: dict, context: str = "") -> Flashcard | None:
     surrounding prose so it reads as a real recall question, distinct from the
     cloze front (cloze cards never enter the front-dedupe set, so no collision).
 
-    The surrounding prose is only used when it actually describes the code — an
-    unrelated explanatory sentence would otherwise produce a card like
-    "Recall the code shown: <random prose>" (issue #36). Those fall back to the
-    exact-code template.
+    The surrounding prose is only used when it clearly describes the code — a
+    sentence beginning "The code ..." or a direct question, free of asset
+    markers and line breaks. Explanatory prose, table rows, and sentences that
+    swallow a ``[CODE n]`` token fall back to the exact-code template instead of
+    producing a confusing "Recall the code shown: <prose>" front (issue #36).
     """
     token = asset["token"]
     base = _front_from_context(context, token)
-    low = base.lower()
-    if base == f"Complete the code ({token})":
-        front = f"Recall the exact code in {token}:"
-    elif low.startswith("the code"):
+    if base.lower().startswith("the code") and _clean_code_description(base):
         front = "Recall the code that " + base[8:].strip()
-    elif base.endswith("?") and len(base) <= 100:
+    elif base.endswith("?") and _clean_code_description(base):
         front = base
-    elif len(base) <= 100 and any(h in low for h in _CODE_DESC_HINTS):
-        front = f"Recall the code shown: {base}"
     else:
         front = f"Recall the exact code in {token}:"
     return Flashcard(front, f"[{token}]", [], card_type="command", code_ref=token)

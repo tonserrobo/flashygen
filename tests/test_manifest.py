@@ -52,18 +52,33 @@ def test_figure_only_sections_are_not_gaps_or_uncited():
     m = build_manifest("p", "T", sections, _cards(), assets)
     by = {s["heading"]: s for s in m["sections"]}
     assert by["Diagrams"]["figure_only"] is True
-    assert m["uncited_assets"] == []  # figure lives in a figure-only section
+    assert m["uncited_assets"] == []
+    assert m["uncited_figures"] == []
     cov = coverage(m)
     assert cov["total"] == 1 and cov["uncovered"] == []
 
 
-def test_figure_in_prose_section_still_uncited():
+def test_figure_in_prose_section_is_tracked_separately_not_as_a_gap():
     sections = [
         {"heading": "Actors", "content": "Actors are the base object type. [FIGURE 1: actor]"},
     ]
     assets = [{"token": "FIGURE 1", "kind": "figure", "url": "u", "caption": "actor"}]
     m = build_manifest("p", "T", sections, _cards(), assets)
-    assert m["uncited_assets"] == ["FIGURE 1"]
+    assert m["uncited_assets"] == []          # only actionable (code) assets
+    assert m["uncited_figures"] == ["FIGURE 1"]  # illustrations are informational
+
+
+def test_diagram_code_assets_are_not_reported_as_gaps():
+    """Mermaid/plantuml code blocks are illustrations, never carded (issue #21)."""
+    sections = [{"heading": "Flow", "content": "Flow chart. [CODE 1]\n```mermaid\nA --> B\n```"}]
+    assets = [
+        {"token": "CODE 1", "kind": "code", "language": "mermaid", "content": "A --> B"},
+        {"token": "CODE 2", "kind": "code", "language": "cpp", "content": "int x;"},
+    ]
+    m = build_manifest("p", "T", sections, _cards(), assets)
+    assert m["uncited_assets"] == ["CODE 2"]  # real code still flagged
+    cov = coverage(m)
+    assert cov["uncited_code"] == ["CODE 2"]
 
 
 def test_diff_detects_new_changed_and_uncovered():

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from flashygen.content_parser import is_figure_only
-from flashygen.flashcard_generator import Flashcard
+from flashygen.flashcard_generator import Flashcard, _DIAGRAM_LANGUAGES
 
 
 def section_hash(content: str) -> str:
@@ -89,7 +89,18 @@ def build_manifest(
         "uncited_assets": [
             a["token"]
             for a in assets
-            if a["token"] not in cited and a["token"] not in figure_only_tokens
+            if a.get("kind") == "code"
+            and a["token"] not in cited
+            and a["token"] not in figure_only_tokens
+            # diagram fences are illustrations, never carded (issue #21)
+            and a.get("language", "").lower() not in _DIAGRAM_LANGUAGES
+        ],
+        "uncited_figures": [
+            a["token"]
+            for a in assets
+            if a.get("kind") == "figure"
+            and a["token"] not in cited
+            and a["token"] not in figure_only_tokens
         ],
     }
 
@@ -105,6 +116,7 @@ def coverage(manifest: Dict[str, Any]) -> Dict[str, Any]:
         "uncovered": uncovered,
         "uncited_assets": uncited,
         "uncited_code": [t for t in uncited if t.startswith("CODE")],
+        "uncited_figures": manifest.get("uncited_figures", []),
     }
 
 
@@ -126,6 +138,7 @@ def diff_sections(manifest: Dict[str, Any], current_sections: List[Dict[str, str
         ],
         "uncited_assets": uncited,
         "uncited_code": [t for t in uncited if t.startswith("CODE")],
+        "uncited_figures": manifest.get("uncited_figures", []),
     }
 
 

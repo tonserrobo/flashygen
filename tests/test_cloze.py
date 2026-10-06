@@ -278,7 +278,7 @@ def test_backfill_adds_full_code_command_card(monkeypatch):
     assert "cloze" in types and "command" in types
     cmd = next(c for c in cards if c.card_type == "command")
     assert cmd.back == "[CODE 1]" and cmd.code_ref == "CODE 1"
-    assert "Recall the code" in cmd.front
+    assert cmd.front.startswith("Recall the")
 
 
 def test_no_extra_command_card_when_qa_already_cites_asset(monkeypatch):
@@ -334,6 +334,13 @@ def test_code_command_card_falls_back_on_unrelated_prose():
         "Not using it correctly can lead to unintended behavior, such as assigning a "
         "parameter value back to itself.",
     )
+    assert cmd.front == "Recall the exact code in CODE 1:"
+
+
+def test_code_command_card_rejects_description_with_token_or_newline():
+    from flashygen.flashcard_generator import _code_command_card
+    asset = ASSETS[0]
+    cmd = _code_command_card(asset, "The code shows how to do it:\n[CODE 2]\nand more")
     assert cmd.front == "Recall the exact code in CODE 1:"
 
 

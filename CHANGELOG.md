@@ -22,16 +22,19 @@ Review of the Structs, Classes & Objects deck (issue
   Cards anchored to different code assets are never merged, and the pass still
   refuses to empty a section.
 - **Command cards framed cleanly**: `_code_command_card` only uses the
-  surrounding prose when it actually describes the code; unrelated explanatory
-  sentences now fall back to `"Recall the exact code in [CODE n]:"` instead of a
-  truncated prose front.
+  surrounding prose when it clearly describes the code — a sentence beginning
+  "The code …" or a direct question, free of line breaks and asset markers.
+  Explanatory prose and sentences that swallow a `[CODE n]` token fall back to
+  `"Recall the exact code in [CODE n]:"` instead of a confusing prose front.
 - **Code refs repaired**: a command/troubleshoot card that cites `[CODE n]` in
   its body but omits `code_ref` now gets the ref filled in, so it can be keyed
   and deduped by asset.
-- **Figure-only sections skipped**: a section whose only substance is figure
-  marker(s) is not sent to the model and is no longer reported as an "uncovered"
-  section or as an uncited asset. Uncited figures are summarised on one line
-  rather than flooding the coverage report; uncited *code* remains a listed gap.
+- **Uncited assets separated**: `uncited_assets` now lists only actionable
+  *code* assets — diagram fences (mermaid/plantuml/dot/graphviz) are
+  illustrations and are never carded (#21), so they are no longer reported as
+  gaps. Uncited figures are tracked separately as `uncited_figures` and shown as
+  a one-line count rather than flooding the coverage report. Figure-only
+  sections are skipped and not reported as uncovered.
 
 ## [0.2.6] - 2026-09-24
 
