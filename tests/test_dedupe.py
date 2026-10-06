@@ -94,3 +94,57 @@ def test_sections_pipeline_dedupes_across_sections(monkeypatch):
     )
     assert seen == [DUP_A, DUP_B]  # judge saw the cross-section pair
     assert cards == [DUP_A]
+
+
+# --- deterministic deck-level dedup (issue #36) -----------------------------
+
+def test_deterministic_dedup_drops_exact_repeats():
+    from flashygen.flashcard_generator import _dedupe_cards
+    a = Flashcard("What is Inheritance in OOP?", "A mechanism where new classes reuse existing ones.")
+    b = Flashcard("What is Inheritance in OOP?", "A mechanism where new classes reuse existing ones.")
+    a.section = b.section = "Inheritance"
+    kept, dropped = _dedupe_cards([a, b])
+    assert kept == [a] and dropped == 1
+
+
+def test_deterministic_dedup_drops_same_question_near_identical_answer():
+    from flashygen.flashcard_generator import _dedupe_cards
+    a = Flashcard("What is a copy constructor?", "A constructor that initialises an object from another object of the same type, copying its members.")
+    b = Flashcard("What is a copy constructor?", "A constructor that initializes an object from another object of the same type by copying its members.")
+    kept, dropped = _dedupe_cards([a, b])
+    assert len(kept) == 1 and dropped == 1
+
+
+def test_deterministic_dedup_keeps_same_front_for_different_code_assets():
+    from flashygen.flashcard_generator import _dedupe_cards
+    a = Flashcard("The Person class uses composition.", "[CODE 209]", card_type="command", code_ref="CODE 209")
+    b = Flashcard("The Person class uses composition.", "[CODE 210]", card_type="command", code_ref="CODE 210")
+    kept, dropped = _dedupe_cards([a, b])
+    assert kept == [a, b] and dropped == 0
+
+
+def test_deterministic_dedup_keeps_distinct_questions():
+    from flashygen.flashcard_generator import _dedupe_cards
+    a = Flashcard("What is a default constructor?", "A constructor callable with no arguments; compiler generates one when none is declared.")
+    b = Flashcard("What is a copy constructor?", "Initialises an object from another object of the same type by copying its members.")
+    kept, dropped = _dedupe_cards([a, b])
+    assert kept == [a, b] and dropped == 0
+
+
+def test_deterministic_dedup_does_not_collide_clozes_for_different_assets():
+    from flashygen.flashcard_generator import _dedupe_cards
+    a = Flashcard("Complete the code (CODE 1)", "[CODE 1]", card_type="cloze", code_ref="CODE 1", blanks=["x"])
+    b = Flashcard("Complete the code (CODE 2)", "[CODE 2]", card_type="cloze", code_ref="CODE 2", blanks=["y"])
+    kept, dropped = _dedupe_cards([a, b])
+    assert kept == [a, b] and dropped == 0
+
+
+def test_deterministic_dedup_never_empties_a_section():
+    from flashygen.flashcard_generator import _dedupe_cards
+    a = Flashcard("What is slicing?", "Copying a derived object into a base value loses the derived part.")
+    a.section = "Glossary"
+    b = Flashcard("What is slicing?", "Copying a derived object into a base value loses the derived part.")
+    b.section = "Glossary"
+    kept, dropped = _dedupe_cards([a, b])
+    assert len(kept) == 1 and dropped == 1  # section keeps one card
+

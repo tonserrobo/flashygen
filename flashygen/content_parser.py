@@ -1,6 +1,30 @@
 """Parse Notion blocks into structured content for flashcard generation."""
 
+import re
 from typing import Dict, List, Any
+
+
+_FIGURE_TOKEN_RE = re.compile(r"\[FIGURE \d+[^\]]*\]")
+_FENCE_RE = re.compile(r"```.*?```", re.S)
+_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s.*$", re.M)
+_RULE_RE = re.compile(r"^\s*[-*_]{3,}\s*$", re.M)
+_TABLE_ROW_RE = re.compile(r"^\s*\|.*$", re.M)
+
+
+def is_figure_only(content: str) -> bool:
+    """A section whose only substance is figure marker(s) — no prose or code.
+
+    Such sections legitimately yield no cards (there is no fact to ask), so
+    they are skipped during generation and not reported as uncovered content.
+    """
+    if "FIGURE" not in content:
+        return False
+    stripped = _FIGURE_TOKEN_RE.sub("", content)
+    stripped = _FENCE_RE.sub("", stripped)
+    stripped = _HEADING_RE.sub("", stripped)
+    stripped = _RULE_RE.sub("", stripped)
+    stripped = _TABLE_ROW_RE.sub("", stripped)
+    return not stripped.strip()
 
 
 def chunk_text(content: str, max_chars: int) -> List[str]:

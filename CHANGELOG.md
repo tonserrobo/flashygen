@@ -3,6 +3,36 @@
 All notable changes to FlashyGen are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## [0.2.7] - 2026-10-06
+
+Review of the Structs, Classes & Objects deck (issue
+[#36](https://github.com/tonserrobo/flashygen/issues/36)): a huge note produced
+1,077 cards across 403 fragmented sections, many repeated.
+
+### Fixed
+- **Over-fragmentation removed**: `generate`/`generate-md` no longer pre-split
+  long sections into `"<heading> (part N)"` fragments. Sections stay logical
+  (H1/H2); the generator chunks long sections internally for both providers
+  (Claude previously relied on the pre-split). A note with 12 headings now
+  reports 12 sections, not 403.
+- **Deterministic deck-level dedup** (`_dedupe_cards`): runs for every provider
+  before the model-judged pass. Drops exact `(front, back)` repeats and — the
+  common case — any two Q/A cards that ask the *same question* (a big note
+  restates a definition in many chunks and paraphrases the answer each time).
+  Cards anchored to different code assets are never merged, and the pass still
+  refuses to empty a section.
+- **Command cards framed cleanly**: `_code_command_card` only uses the
+  surrounding prose when it actually describes the code; unrelated explanatory
+  sentences now fall back to `"Recall the exact code in [CODE n]:"` instead of a
+  truncated prose front.
+- **Code refs repaired**: a command/troubleshoot card that cites `[CODE n]` in
+  its body but omits `code_ref` now gets the ref filled in, so it can be keyed
+  and deduped by asset.
+- **Figure-only sections skipped**: a section whose only substance is figure
+  marker(s) is not sent to the model and is no longer reported as an "uncovered"
+  section or as an uncited asset. Uncited figures are summarised on one line
+  rather than flooding the coverage report; uncited *code* remains a listed gap.
+
 ## [0.2.6] - 2026-09-24
 
 Card-presentation fixes driven by reviewing the C++ decks

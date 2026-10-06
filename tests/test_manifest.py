@@ -43,6 +43,29 @@ def test_coverage_lists_uncovered_sections():
     assert cov["uncovered"] == ["Build Errors"]
 
 
+def test_figure_only_sections_are_not_gaps_or_uncited():
+    sections = [
+        {"heading": "Live Coding", "content": "Live Coding injects compiled changes."},
+        {"heading": "Diagrams", "content": "## Diagrams\n\n[FIGURE 1: actor]"},
+    ]
+    assets = [{"token": "FIGURE 1", "kind": "figure", "url": "u", "caption": "actor"}]
+    m = build_manifest("p", "T", sections, _cards(), assets)
+    by = {s["heading"]: s for s in m["sections"]}
+    assert by["Diagrams"]["figure_only"] is True
+    assert m["uncited_assets"] == []  # figure lives in a figure-only section
+    cov = coverage(m)
+    assert cov["total"] == 1 and cov["uncovered"] == []
+
+
+def test_figure_in_prose_section_still_uncited():
+    sections = [
+        {"heading": "Actors", "content": "Actors are the base object type. [FIGURE 1: actor]"},
+    ]
+    assets = [{"token": "FIGURE 1", "kind": "figure", "url": "u", "caption": "actor"}]
+    m = build_manifest("p", "T", sections, _cards(), assets)
+    assert m["uncited_assets"] == ["FIGURE 1"]
+
+
 def test_diff_detects_new_changed_and_uncovered():
     m = build_manifest("p", "T", SECTIONS, _cards(), [])
     current = [
@@ -84,7 +107,7 @@ def test_checkpoint_resume_skips_generated_sections(tmp_path, monkeypatch):
 
     def fake_generate(self, content, title, cards_per_concept=3, assets=None):
         calls.append(title)
-        card = Flashcard("Q?", "An answer long enough to survive any future gating logic.", [])
+        card = Flashcard(f"Q? {title}", "An answer long enough to survive any future gating logic.", [])
         return [card]
 
     monkeypatch.setattr(FlashcardGenerator, "generate_flashcards", fake_generate)
@@ -96,7 +119,7 @@ def test_checkpoint_resume_skips_generated_sections(tmp_path, monkeypatch):
 
     second = gen.generate_flashcards_from_sections(SECTIONS, "T", work_dir=tmp_path)
     assert len(calls) == 2  # resumed from checkpoints, no new LLM calls
-    assert len(second) == 2 and second[0].front == "Q?"
+    assert len(second) == 2 and second[0].front.startswith("Q? T")
 
 
 def test_checkpoint_regenerates_when_section_content_changes(tmp_path, monkeypatch):

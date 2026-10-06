@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+from flashygen.content_parser import is_figure_only
 from flashygen.flashcard_generator import Flashcard
 
 
@@ -59,6 +60,19 @@ def build_manifest(
         by_section.setdefault(getattr(card, "section", ""), []).append(card_to_dict(card))
         searchable = f"{card.front} {card.back} {card.explainer} {card.code_ref}"
         cited.update(f"{k} {n}" for k, n in re.findall(r"(CODE|FIGURE) (\d+)", searchable))
+
+    # Figure-only sections are skipped during generation — their figures are
+    # illustrations with no fact to card, so flag the section and don't report
+    # its assets as uncited (issue #36).
+    figure_only: Dict[str, bool] = {}
+    figure_only_tokens: set = set()
+    for s in sections:
+        only = is_figure_only(s.get("content", ""))
+        figure_only[s["heading"]] = only
+        if only:
+            figure_only_tokens.update(
+                f"{k} {n}" for k, n in re.findall(r"(CODE|FIGURE) (\d+)", s.get("content", ""))
+            )
     return {
         "page_id": page_id,
         "title": title,
@@ -67,22 +81,30 @@ def build_manifest(
             {
                 "heading": s["heading"],
                 "content_hash": section_hash(s.get("content", "")),
+                "figure_only": figure_only[s["heading"]],
                 "cards": by_section.get(s["heading"], []),
             }
             for s in sections
         ],
-        "uncited_assets": [a["token"] for a in assets if a["token"] not in cited],
+        "uncited_assets": [
+            a["token"]
+            for a in assets
+            if a["token"] not in cited and a["token"] not in figure_only_tokens
+        ],
     }
 
 
 def coverage(manifest: Dict[str, Any]) -> Dict[str, Any]:
     sections = manifest["sections"]
-    uncovered = [s["heading"] for s in sections if not s["cards"]]
+    cardable = [s for s in sections if not s.get("figure_only")]
+    uncovered = [s["heading"] for s in cardable if not s["cards"]]
+    uncited = manifest.get("uncited_assets", [])
     return {
-        "covered": len(sections) - len(uncovered),
-        "total": len(sections),
+        "covered": len(cardable) - len(uncovered),
+        "total": len(cardable),
         "uncovered": uncovered,
-        "uncited_assets": manifest.get("uncited_assets", []),
+        "uncited_assets": uncited,
+        "uncited_code": [t for t in uncited if t.startswith("CODE")],
     }
 
 
@@ -95,11 +117,15 @@ def diff_sections(manifest: Dict[str, Any], current_sections: List[Dict[str, str
         for s in current_sections
         if s["heading"] in old and section_hash(s.get("content", "")) != old[s["heading"]]["content_hash"]
     ]
+    uncited = manifest.get("uncited_assets", [])
     return {
         "new": new,
         "changed": changed,
-        "uncovered": [s["heading"] for s in manifest["sections"] if not s["cards"]],
-        "uncited_assets": manifest.get("uncited_assets", []),
+        "uncovered": [
+            s["heading"] for s in manifest["sections"] if not s["cards"] and not s.get("figure_only")
+        ],
+        "uncited_assets": uncited,
+        "uncited_code": [t for t in uncited if t.startswith("CODE")],
     }
 
 

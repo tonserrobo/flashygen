@@ -18,6 +18,13 @@ def test_max_sections_is_ten():
         f"max_sections must be ≤10 to keep total cards ≤150. Found: {max_sections_values}"
     )
 
+def test_pipelines_do_not_pre_split_sections():
+    """Sections stay logical; the generator chunks long ones internally (issue #36)."""
+    root = pathlib.Path(__file__).parent.parent
+    for name in ("main.py", "flashygen/markdown_loader.py"):
+        source = (root / name).read_text()
+        assert "split_large_sections" not in source, f"{name} must not pre-split sections"
+
 def test_claude_prompt_has_card_cap():
     """Claude prompt must contain the AT MOST 8 cards cap."""
     prompt = _build_claude_prompt("some content", "Test Page", 3)

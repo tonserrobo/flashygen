@@ -214,7 +214,8 @@ def section_markdown(path: str | Path) -> Tuple[Dict, NotionContentParser, List[
             sections = sections_h2
     if len(sections) > 20:
         sections = parser.merge_small_sections(sections, min_content_size=800, max_sections=10)
-    sections = parser.split_large_sections(sections, max_section_size=1200)
+    # Long sections are chunked by the generator, so no "(part N)" pre-split
+    # (issue #36).
 
     import hashlib
 

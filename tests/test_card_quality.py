@@ -72,6 +72,24 @@ def test_gate_keeps_prose_recall_card_as_recall():
     assert kept[0].card_type == "recall"
 
 
+def test_gate_repairs_missing_code_ref_from_cited_token():
+    """A command card citing [CODE n] but omitting code_ref must be repairable (issue #36)."""
+    card = Flashcard(
+        "How do you define a constructor using an initializer list?",
+        "Use the syntax: ClassName() : member1(value1), member2(value2) {} [CODE 94]",
+        card_type="command",
+    )
+    kept, _ = _quality_gate([card])
+    assert kept[0].code_ref == "CODE 94"
+
+
+def test_gate_keeps_fence_command_card_without_code_ref():
+    """A fence-only command card has no asset token, so no code_ref is required."""
+    card = Flashcard("How do you log?", 'Use:\n```cpp\nUE_LOG(LogTemp, Warning, TEXT("Hi"));\n```', card_type="command")
+    kept, _ = _quality_gate([card])
+    assert kept[0].card_type == "command" and kept[0].code_ref == ""
+
+
 def test_gate_moves_embedded_explainer_out_of_back():
     """A model that appends 'Explainer:' to the answer must not leave it there (issue #28)."""
     card = Flashcard(

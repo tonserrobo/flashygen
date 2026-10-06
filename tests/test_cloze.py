@@ -325,6 +325,18 @@ def test_code_command_card_phrasing():
     assert cmd2.front == "Recall the exact code in CODE 1:"
 
 
+def test_code_command_card_falls_back_on_unrelated_prose():
+    """Random explanatory prose must not become a "Recall the code shown:" front (issue #36)."""
+    from flashygen.flashcard_generator import _code_command_card
+    asset = ASSETS[0]
+    cmd = _code_command_card(
+        asset,
+        "Not using it correctly can lead to unintended behavior, such as assigning a "
+        "parameter value back to itself.",
+    )
+    assert cmd.front == "Recall the exact code in CODE 1:"
+
+
 def test_prompt_steers_formatted_code_cards():
     prompt = _build_ollama_prompt("content", "T")
     assert "formatted code block is the answer" in prompt

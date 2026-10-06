@@ -56,10 +56,9 @@ def _fetch_and_section(notion_token: str, page_url: str):
         sections = parser.merge_small_sections(sections, min_content_size=800, max_sections=10)
         console.print(f"[dim]Merged down to {len(sections)} section(s)[/dim]")
 
-    # Split large sections so each fits comfortably in a small model's context
-    sections = parser.split_large_sections(sections, max_section_size=1200)
-    console.print(f"[dim]After size-capping: {len(sections)} section(s)[/dim]")
-
+    # Sections stay logical (H1/H2); the generator chunks long sections
+    # internally, so pre-splitting into "(part N)" fragments only produced
+    # hundreds of near-duplicate sections and cards (issue #36).
     return page_data, parser, sections
 
 
@@ -71,8 +70,12 @@ def _print_coverage(cov: dict):
     console.print(f"\n[bold]Coverage:[/bold] {cov['covered']}/{cov['total']} sections have cards")
     for heading in cov["uncovered"]:
         console.print(f"  [yellow]uncovered section:[/yellow] {heading}")
-    for token in cov["uncited_assets"]:
-        console.print(f"  [yellow]uncited asset:[/yellow] [{token}]")
+    uncited_code = cov.get("uncited_code", [t for t in cov["uncited_assets"] if t.startswith("CODE")])
+    uncited_figs = [t for t in cov["uncited_assets"] if t.startswith("FIGURE")]
+    for token in uncited_code:
+        console.print(f"  [yellow]uncited code asset:[/yellow] [{token}]")
+    if uncited_figs:
+        console.print(f"  [dim]{len(uncited_figs)} figure(s) not cited by any card[/dim]")
 
 
 def _resolve_config(provider: str):
@@ -197,8 +200,8 @@ def _run_check(page_data: dict, parser, sections: list, manifest_path: str):
         table.add_row("changed", heading)
     for heading in diff["uncovered"]:
         table.add_row("no cards", heading)
-    for token in diff["uncited_assets"]:
-        table.add_row("uncited asset", f"[{token}]")
+    for token in diff["uncited_code"]:
+        table.add_row("uncited code", f"[{token}]")
     console.print(table)
 
     gaps = len(diff["new"]) + len(diff["changed"]) + len(diff["uncovered"])

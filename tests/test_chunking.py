@@ -1,5 +1,5 @@
 """Tests for fence-aware chunking (issue #2)."""
-from flashygen.content_parser import NotionContentParser, chunk_text
+from flashygen.content_parser import NotionContentParser, chunk_text, is_figure_only
 
 
 def _fences_balanced(chunk: str) -> bool:
@@ -66,3 +66,13 @@ def test_split_large_sections_preserves_fences():
     assert len(result) > 1
     assert all(_fences_balanced(s["content"]) for s in result)
     assert sum(1 for s in result if CODE_BLOCK in s["content"]) == 1
+
+
+def test_is_figure_only_true_for_figure_with_no_prose():
+    assert is_figure_only("## Actor\n\n[FIGURE 1: Actor lifecycle]\n")
+    assert is_figure_only("[FIGURE 2]")
+
+
+def test_is_figure_only_false_when_section_has_prose():
+    assert not is_figure_only("## Actor\n\nActors are the base object type.\n\n[FIGURE 1: Actor]")
+    assert not is_figure_only("Just prose, no figures at all.")

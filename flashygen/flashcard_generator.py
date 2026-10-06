@@ -11,7 +11,7 @@ from anthropic.types import TextBlock
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from flashygen.content_parser import chunk_text
+from flashygen.content_parser import chunk_text, is_figure_only
 from flashygen.llm import OllamaClient, OllamaConfig
 
 console = Console()
@@ -112,6 +112,10 @@ class FlashcardGenerator:
                 console.print(f"[dim]Skipping empty section: {heading}[/dim]")
                 continue
 
+            if is_figure_only(content):
+                console.print(f"[dim]Skipping figure-only section: {heading}[/dim]")
+                continue
+
             console.print(f"\n[bold]Section {i}/{len(sections)}:[/bold] {heading}")
 
             content_hash = section_hash(content)
@@ -151,6 +155,18 @@ class FlashcardGenerator:
             except Exception as e:
                 console.print(f"[yellow]⚠[/yellow] Failed to generate cards for this section: {e}")
                 console.print("[dim]Continuing with next section...[/dim]")
+
+        # Sibling chunks of one logical section restate each other's facts; a
+        # huge note produced via size-capping can repeat a definition many
+        # times. Drop deterministic duplicates for every provider before the
+        # model-judged pass below (issue #36).
+        if len(all_flashcards) > 1:
+            before = len(all_flashcards)
+            all_flashcards, _ = _dedupe_cards(all_flashcards)
+            if len(all_flashcards) < before:
+                console.print(
+                    f"[yellow]Dropped {before - len(all_flashcards)} duplicate card(s)[/yellow]"
+                )
 
         # per-section _quality_gate can't see other sections; summary sections
         # restate earlier facts, so dedupe once over the whole deck (issue #22)
@@ -258,6 +274,19 @@ class FlashcardGenerator:
     # ------------------------------------------------------------------ #
 
     def _generate_claude(self, content: str, title: str, cards_per_concept: int) -> list[Flashcard]:
+        # Chunk like the Ollama path so a large logical section stays within the
+        # model's context — sections are no longer pre-split into fragments
+        # (issue #36).
+        chunks = chunk_text(content, max_chars=_CHUNK_MAX_CHARS)
+        all_cards: list[Flashcard] = []
+        for j, chunk in enumerate(chunks, 1):
+            if len(chunks) > 1:
+                console.print(f"[cyan]  Chunk {j}/{len(chunks)} ({len(chunk)} chars)...[/cyan]")
+            all_cards.extend(self._claude_chunk(chunk, title, cards_per_concept))
+        console.print(f"[green]Generated {len(all_cards)} flashcards![/green]")
+        return all_cards
+
+    def _claude_chunk(self, content: str, title: str, cards_per_concept: int) -> list[Flashcard]:
         prompt = _build_claude_prompt(content, title, cards_per_concept)
         console.print("[cyan]Generating flashcards with Claude...[/cyan]")
         with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as p:
@@ -284,9 +313,7 @@ class FlashcardGenerator:
             response_text = response_text[start:]
 
         raw: list[Any] = json.loads(response_text, strict=False)
-        cards = _parse_raw_cards(raw, title)
-        console.print(f"[green]Generated {len(cards)} flashcards![/green]")
-        return cards
+        return _parse_raw_cards(raw, title)
 
 
 # ------------------------------------------------------------------ #
@@ -361,6 +388,12 @@ Return ONLY a valid JSON array. Each object: "front", "back", "type", and option
 
 
 _DIAGRAM_LANGUAGES = {"mermaid", "plantuml", "dot", "graphviz"}
+
+# Prose sentences that actually describe the adjacent code, used to give a
+# command card a meaningful front instead of the generic recall template.
+_CODE_DESC_HINTS = (
+    "code", "example", "syntax", "snippet", "method", "function", "class", "macro",
+)
 
 
 def _clean_blanks(blanks: list[str] | None, content: str | None = None) -> list[str]:
@@ -455,17 +488,25 @@ def _code_command_card(asset: dict, context: str = "") -> Flashcard | None:
     The front is framed as recalling/producing the code and derived from the
     surrounding prose so it reads as a real recall question, distinct from the
     cloze front (cloze cards never enter the front-dedupe set, so no collision).
+
+    The surrounding prose is only used when it actually describes the code — an
+    unrelated explanatory sentence would otherwise produce a card like
+    "Recall the code shown: <random prose>" (issue #36). Those fall back to the
+    exact-code template.
     """
     token = asset["token"]
     base = _front_from_context(context, token)
+    low = base.lower()
     if base == f"Complete the code ({token})":
-        return Flashcard(
-            f"Recall the exact code in {token}:", f"[{token}]", [], card_type="command", code_ref=token
-        )
-    if base.lower().startswith("the code"):
+        front = f"Recall the exact code in {token}:"
+    elif low.startswith("the code"):
         front = "Recall the code that " + base[8:].strip()
-    else:
+    elif base.endswith("?") and len(base) <= 100:
+        front = base
+    elif len(base) <= 100 and any(h in low for h in _CODE_DESC_HINTS):
         front = f"Recall the code shown: {base}"
+    else:
+        front = f"Recall the exact code in {token}:"
     return Flashcard(front, f"[{token}]", [], card_type="command", code_ref=token)
 
 
@@ -594,6 +635,58 @@ def _word_jaccard(a: str, b: str) -> float:
     return len(wa & wb) / len(wa | wb) if wa | wb else 0.0
 
 
+def _revert_section_emptying(cards: list[Flashcard], drop: set[int]) -> None:
+    """Never let a dedupe turn a section into an "uncovered" gap (issue #29)."""
+    section_qa: dict[str, set[int]] = {}
+    for i, c in enumerate(cards):
+        if c.card_type != "cloze":
+            section_qa.setdefault(getattr(c, "section", "") or "", set()).add(i)
+    for indices in section_qa.values():
+        if indices and indices <= drop:
+            drop.discard(min(indices))
+
+
+def _dedupe_cards(cards: list[Flashcard]) -> tuple[list[Flashcard], int]:
+    """Deterministic deck-level duplicate removal (issue #36).
+
+    Runs for every provider before the model-judged pass. Drops exact
+    ``(front, back)`` repeats and, more importantly, any two Q/A cards that ask
+    the *same question* — a huge note restates a definition in many sibling
+    chunks, and the model paraphrases the answer each time, so question identity
+    is the reliable signal while answer wording is not. Cloze cards are keyed by
+    their asset, and two cards anchored to different code blocks are never
+    treated as duplicates.
+    """
+    drop: set[int] = set()
+    exact: set[tuple] = set()
+    for i, c in enumerate(cards):
+        if c.card_type == "cloze":
+            key = ("cloze", c.code_ref, _normalize(c.front), _normalize(c.back), tuple(c.blanks))
+        else:
+            key = ("qa", _normalize(c.front), _normalize(c.back))
+        if key in exact:
+            drop.add(i)
+        else:
+            exact.add(key)
+
+    by_front: dict[str, list[int]] = {}
+    for i, c in enumerate(cards):
+        if i in drop or c.card_type == "cloze":
+            continue
+        key = _normalize(c.front)
+        duplicate = any(
+            not (c.code_ref and cards[j].code_ref and c.code_ref != cards[j].code_ref)
+            for j in by_front.get(key, [])
+        )
+        if duplicate:
+            drop.add(i)
+        else:
+            by_front.setdefault(key, []).append(i)
+
+    _revert_section_emptying(cards, drop)
+    return [c for i, c in enumerate(cards) if i not in drop], len(drop)
+
+
 _DEDUPE_PROMPT = """These flashcards all come from one deck. A summary or quick-reference
 section often restates a fact that already has a card — find such duplicates.
 
@@ -638,13 +731,7 @@ def _dedupe_cards_llm(client: Any, cards: list[Flashcard]) -> list[Flashcard]:
             drop.add(qa[d - 1][0])
     # A drop that would leave a whole section with no card is reverted — dedupe
     # must never surface a gap as "uncovered" content (issue #29).
-    section_qa: dict[str, set[int]] = {}
-    for i, c in enumerate(cards):
-        if c.card_type != "cloze":
-            section_qa.setdefault(getattr(c, "section", "") or "", set()).add(i)
-    for indices in section_qa.values():
-        if indices and indices <= drop:
-            drop.discard(min(indices))
+    _revert_section_emptying(cards, drop)
     return [c for i, c in enumerate(cards) if i not in drop]
 
 
@@ -681,6 +768,13 @@ def _quality_gate(
         ):
             card.card_type = "command"
         has_code = "```" in back or "[CODE" in back or "`" in back
+        # A card tied to a code asset must carry its ref so it can be keyed and
+        # deduped by asset later (issue #36). A model card that cites [CODE n]
+        # in its body but omits code_ref gets repaired here.
+        if not card.code_ref:
+            token_match = re.search(r"\[(CODE \d+)\]", front + back)
+            if token_match:
+                card.code_ref = token_match.group(1)
         if card.card_type in _CODE_REQUIRED_TYPES and not has_code:
             continue
         # short backs are fine when they cite code — the token expands at export
