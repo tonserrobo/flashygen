@@ -13,6 +13,13 @@ across 403 fragmented sections, many repeated. Follow-up work is tracked in
 [#39](https://github.com/tonserrobo/flashygen/issues/39).
 
 ### Fixed
+- **Markdown fence pairing made robust**
+  ([#40](https://github.com/tonserrobo/flashygen/issues/40)): a stray
+  two-backtick line (`` `` ``) or a language-tagged line used as a closer
+  desynced `MarkdownNoteLoader` for the rest of the file — prose was captured as
+  `CODE n` assets and real code left as prose. A closing fence must now be
+  backticks only (two or more), and a ```` ```cpp ```` line while a block is open
+  is treated as a new opener.
 - **Figures actually used** ([#37](https://github.com/tonserrobo/flashygen/issues/37)):
   the model rarely cites `[FIGURE n]`, so figures were registered but never
   embedded. A deterministic backfill now gives each figure with nearby prose or
@@ -21,12 +28,14 @@ across 403 fragmented sections, many repeated. Follow-up work is tracked in
   exporter swaps the token for the downloaded image. Uncaptioned figures with no
   prose are skipped, diagram-fence placeholder captions (`mermaid`, …) are
   ignored, and figures the model already cited are not duplicated.
-- **Code coverage no longer masked by a bad model cloze**
-  ([#36](https://github.com/tonserrobo/flashygen/issues/36)): the cloze backfill
-  treated *any* model-emitted `cloze` as covering its token. If the model
-  hallucinated blanks, that cloze was later dropped by the quality gate and the
-  token ended up with no card at all. Model clozes are now validated against the
-  registry before being trusted, so the deterministic cloze still runs.
+- **Code coverage no longer masked by the front-dedup**
+  ([#36](https://github.com/tonserrobo/flashygen/issues/36)): `_quality_gate`
+  compared normalized fronts, so fallback/command cards (and the new image-front
+  figure cards) that differ only by their `[CODE n]`/`[FIGURE n]` token were
+  dropped as near-duplicates — leaving some assets with no card at all. Cards
+  anchored to different assets are now exempt from the front-dedup. Model-emitted
+  clozes are also validated against the registry before they can mark a token
+  covered.
 - **Over-fragmentation removed**: `generate`/`generate-md` no longer pre-split
   long sections into `"<heading> (part N)"` fragments. Sections stay logical
   (H1/H2); the generator chunks long sections internally for both providers

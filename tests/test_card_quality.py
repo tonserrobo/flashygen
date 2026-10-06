@@ -72,6 +72,36 @@ def test_gate_keeps_prose_recall_card_as_recall():
     assert kept[0].card_type == "recall"
 
 
+def test_gate_keeps_template_cards_for_different_assets():
+    """Fallback/command cards that differ only by their token are not duplicates (issue #36)."""
+    a = Flashcard("What does this code do?\n[CODE 1]", "[CODE 1]", card_type="recall", code_ref="CODE 1")
+    b = Flashcard("What does this code do?\n[CODE 2]", "[CODE 2]", card_type="recall", code_ref="CODE 2")
+    assets = [
+        {"token": "CODE 1", "kind": "code", "language": "cpp", "content": "int a;"},
+        {"token": "CODE 2", "kind": "code", "language": "cpp", "content": "int b;"},
+    ]
+    kept, dropped = _quality_gate([a, b], assets=assets)
+    assert len(kept) == 2 and dropped == 0
+
+
+def test_gate_keeps_figure_image_fronts_for_different_figures():
+    a = Flashcard("What does this figure show?\n[FIGURE 1]", "First description.", code_ref="FIGURE 1")
+    b = Flashcard("What does this figure show?\n[FIGURE 2]", "Second description.", code_ref="FIGURE 2")
+    assets = [
+        {"token": "FIGURE 1", "kind": "figure", "url": "", "caption": "x"},
+        {"token": "FIGURE 2", "kind": "figure", "url": "", "caption": "y"},
+    ]
+    kept, dropped = _quality_gate([a, b], assets=assets)
+    assert len(kept) == 2 and dropped == 0
+
+
+def test_gate_still_drops_duplicate_plain_recall_fronts():
+    a = Flashcard("What is a class?", "A blueprint defining data and behavior for objects.")
+    b = Flashcard("What is a class?", "A user-defined type that bundles data with methods.")
+    kept, dropped = _quality_gate([a, b])
+    assert len(kept) == 1 and dropped == 1
+
+
 def test_gate_repairs_missing_code_ref_from_cited_token():
     """A command card citing [CODE n] but omitting code_ref must be repairable (issue #36)."""
     card = Flashcard(

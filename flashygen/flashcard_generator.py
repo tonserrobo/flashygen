@@ -819,7 +819,7 @@ def _quality_gate(
     """
     known_tokens = {a["token"] for a in assets} if assets is not None else None
     kept: list[Flashcard] = []
-    kept_fronts: list[str] = []
+    kept_fronts: list[tuple[str, str]] = []
     for card in cards:
         if card.card_type == "cloze":
             # cloze cards live or die by their registry reference, nothing else
@@ -867,15 +867,23 @@ def _quality_gate(
             cited = {f"{k} {n}" for k, n in re.findall(r"\[(CODE|FIGURE) (\d+)", front + back)}
             if cited - known_tokens:
                 continue  # hallucinated asset reference
-        # ponytail: O(n²) pairwise dedup — fine for a few hundred cards per deck
-        if any(difflib.SequenceMatcher(None, norm_front, f).ratio() >= 0.85 for f in kept_fronts):
+        # ponytail: O(n²) pairwise dedup — fine for a few hundred cards per deck.
+        # Template cards for different assets (a fallback "What does this code do?
+        # [CODE n]" or an image-front "What does this figure show? [FIGURE n]")
+        # differ only by their token, so they must not collapse into each other —
+        # that silently left code/figure assets with no card (issue #36).
+        if any(
+            not (card.code_ref and ref and card.code_ref != ref)
+            and difflib.SequenceMatcher(None, norm_front, f).ratio() >= 0.85
+            for f, ref in kept_fronts
+        ):
             continue
         # explainer must add context beyond the answer, not restate it
         if card.explainer and difflib.SequenceMatcher(
             None, _normalize(card.explainer), _normalize(back)
         ).ratio() >= 0.85:
             card.explainer = ""
-        kept_fronts.append(norm_front)
+        kept_fronts.append((norm_front, card.code_ref))
         kept.append(card)
     return kept, len(cards) - len(kept)
 

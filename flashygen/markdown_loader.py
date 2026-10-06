@@ -24,7 +24,11 @@ from typing import Dict, List, Tuple
 
 from flashygen.content_parser import NotionContentParser
 
-_FENCE_RE = re.compile(r"```([\w+#.-]*)")
+_FENCE_OPEN_RE = re.compile(r"`{3,}([\w+#.-]*)")
+# A closing fence is backticks only. Tolerating two backticks (a common typo)
+# stops a stray ` `` ` from desyncing every later block — prose then gets read
+# as code and real code as prose (issue #40).
+_FENCE_CLOSE_RE = re.compile(r"`{2,}\s*$")
 _IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
 _FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
 _H1_RE = re.compile(r"^#\s+(.+)$")
@@ -80,15 +84,19 @@ class MarkdownNoteLoader:
         i = 0
         while i < len(lines):
             line = lines[i]
-            m = _FENCE_RE.match(line.strip())
-            if m and line.strip().startswith("```"):
+            m = _FENCE_OPEN_RE.match(line.strip())
+            if m:
                 lang = m.group(1) or "code"
                 body: List[str] = []
                 i += 1
-                while i < len(lines) and not lines[i].strip().startswith("```"):
+                while i < len(lines):
+                    body_line = lines[i].strip()
+                    if _FENCE_CLOSE_RE.match(body_line):
+                        i += 1  # closing fence
+                        break
+                    if _FENCE_OPEN_RE.match(body_line):
+                        break  # a new opener — the previous block was unterminated
                     body.append(lines[i])
-                    i += 1
-                if i < len(lines):  # closing fence
                     i += 1
                 code = "\n".join(body)
                 if lang.strip().lower() in _DIAGRAM_LANGUAGES:
@@ -170,11 +178,19 @@ class MarkdownNoteLoader:
         out: List[str] = []
         in_fence = False
         for line in lines:
-            if line.strip().startswith("```"):
-                in_fence = not in_fence
+            stripped = line.strip()
+            if not in_fence and _FENCE_OPEN_RE.match(stripped):
+                in_fence = True
                 out.append(line)
                 continue
-            if not in_fence and _H1_RE.match(line):
+            if in_fence and _FENCE_CLOSE_RE.match(stripped):
+                in_fence = False
+                out.append(line)
+                continue
+            if in_fence:
+                out.append(line)
+                continue
+            if _H1_RE.match(line):
                 out.append("## " + _H1_RE.match(line).group(1))
                 continue
             out.append(line)

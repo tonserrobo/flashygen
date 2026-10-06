@@ -81,6 +81,32 @@ def test_diagram_does_not_consume_code_token(tmp_path):
     assert [a["token"] for a in loader.assets] == ["CODE 1", "FIGURE 1"]
 
 
+def test_two_backtick_closer_does_not_desync_following_blocks(tmp_path):
+    """A stray `` `` `` must not flip code/prose for the rest of the file (issue #40)."""
+    md = (
+        "# Note\n\n"
+        "```cpp\nint a = 1;\n``\n\n"
+        "Prose paragraph that is not code.\n\n"
+        "```cpp\nint b = 2;\n```\n"
+    )
+    _write(tmp_path, "note.md", md)
+    loader = MarkdownNoteLoader()
+    content, _ = loader.load_directory(tmp_path)
+
+    codes = [a["content"] for a in loader.assets if a["kind"] == "code"]
+    assert codes == ["int a = 1;", "int b = 2;"]
+    assert "Prose paragraph that is not code." in content
+
+
+def test_language_tagged_fence_inside_block_starts_new_block(tmp_path):
+    """A ```` ```cpp ```` line while a block is open is a new opener, not a closer (issue #40)."""
+    md = "# Note\n\n```cpp\nint a = 1;\n```cpp\nint b = 2;\n```\n"
+    _write(tmp_path, "note.md", md)
+    loader = MarkdownNoteLoader()
+    loader.load_directory(tmp_path)
+    assert [a["content"] for a in loader.assets] == ["int a = 1;", "int b = 2;"]
+
+
 def test_internal_h1_releveled_to_h2(tmp_path):
     """A note's own H1 is demoted so the file-stem H1 stays top-level (issue #25)."""
     _write(tmp_path, "Vectors.md", "# Vectors\n\nBody.\n\n# Key Takeaways\n\n- Bullet.")
