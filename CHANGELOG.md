@@ -5,9 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com); versions follow s
 
 ## [0.2.7] - 2026-10-06
 
-Review of the Structs, Classes & Objects deck (issue
-[#36](https://github.com/tonserrobo/flashygen/issues/36)): a huge note produced
-1,077 cards across 403 fragmented sections, many repeated.
+Review of the Structs, Classes & Objects deck: a huge note produced 1,077 cards
+across 403 fragmented sections, many repeated. Follow-up work is tracked in
+[#36](https://github.com/tonserrobo/flashygen/issues/36),
+[#37](https://github.com/tonserrobo/flashygen/issues/37),
+[#38](https://github.com/tonserrobo/flashygen/issues/38) and
+[#39](https://github.com/tonserrobo/flashygen/issues/39).
 
 ### Fixed
 - **Figures actually used**: the model rarely cites `[FIGURE n]`, so figures
