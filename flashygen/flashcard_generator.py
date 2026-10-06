@@ -18,6 +18,10 @@ console = Console()
 
 _CHUNK_MAX_CHARS = 1200
 
+# Matches a figure marker with or without its ": caption" suffix, capturing the
+# bare token (e.g. "[FIGURE 1: Actor]" -> "FIGURE 1").
+_FIGURE_TOKEN_RE = re.compile(r"\[(FIGURE \d+)(?::[^\]]*)?\]")
+
 
 class Flashcard:
     """Represents a single flashcard."""
@@ -247,6 +251,26 @@ class FlashcardGenerator:
                             all_cards.append(fallback)
                             console.print(f"[dim]  + recall card for [{token}] (cloze yielded nothing)[/dim]")
 
+        # Deterministic figure coverage (issue #36): the model rarely cites
+        # [FIGURE n], so each figure with nearby prose or a caption gets its own
+        # card and the exporter swaps the token for the downloaded image.
+        if assets:
+            fig_cited: set[str] = set()
+            for c in all_cards:
+                fig_cited.update(_FIGURE_TOKEN_RE.findall(c.front + c.back))
+                if c.code_ref.startswith("FIGURE "):
+                    fig_cited.add(c.code_ref)
+            for token in dict.fromkeys(_FIGURE_TOKEN_RE.findall(content)):
+                if token in fig_cited:
+                    continue
+                asset = next((a for a in assets if a["token"] == token), None)
+                if asset is None:
+                    continue
+                figure = _figure_card(asset, _asset_context(content, token))
+                if figure:
+                    all_cards.append(figure)
+                    console.print(f"[dim]  + figure card for [{token}][/dim]")
+
         kept, dropped = _quality_gate(all_cards, assets=assets)
         if dropped:
             console.print(f"[yellow]Quality gate dropped {dropped} thin/duplicate card(s)[/yellow]")
@@ -430,12 +454,17 @@ Otherwise return ONLY JSON: [{{"blanks": ["exact substring"], "hint": "one line 
 
 def _asset_context(content: str, token: str, radius: int = 300) -> str:
     """Prose around [token] with code fences stripped — the teaching point
-    lives in the sentences before/after the code, not in the code (issue #20)."""
+    lives in the sentences before/after the code, not in the code (issue #20).
+
+    The marker may carry a caption suffix (``[FIGURE 3: Actor lifecycle]``), so
+    the lookup tolerates it instead of missing captioned figures entirely.
+    """
     prose = re.sub(r"```.*?(```|$)", "", content, flags=re.S)
-    idx = prose.find(f"[{token}]")
-    if idx == -1:
+    match = re.search(rf"\[{re.escape(token)}(?::[^\]]*)?\]", prose)
+    if match is None:
         return ""
-    return prose[max(0, idx - radius): idx + len(token) + 2 + radius].strip()
+    idx = match.start()
+    return prose[max(0, idx - radius): idx + len(match.group(0)) + radius].strip()
 
 
 def _front_from_context(context: str, token: str) -> str:
@@ -473,6 +502,40 @@ def _code_fallback_card(asset: dict, context: str = "") -> Flashcard | None:
         if front != f"Complete the code ({token})":
             return Flashcard(front, f"[{token}]", [], card_type="recall", code_ref=token)
     return Flashcard(f"What does this code do?\n[{token}]", f"[{token}]", [], card_type="recall", code_ref=token)
+
+
+_FIGURE_CONTEXT_MAX = 200
+
+
+def _figure_card(asset: dict, context: str = "") -> Flashcard | None:
+    """One recall card per figure so the image actually lands in the deck (issue #36).
+
+    Figures are registered as ``[FIGURE n]`` markers but the model almost never
+    cites them, so left to the prompt they are never embedded. The prompt is the
+    nearest prose sentence, falling back to the author's caption; the answer is
+    the image token (plus the caption as text). Figures with neither prose nor
+    caption have nothing to ask about and are skipped.
+    """
+    token = asset["token"]
+    caption = str(asset.get("caption") or "").strip()
+    if caption.lower() in _DIAGRAM_LANGUAGES:
+        caption = ""  # markdown diagram fences use the language as a placeholder caption
+    sentence = _front_from_context(context, token) if context else ""
+    if (
+        sentence == f"Complete the code ({token})"
+        or len(sentence) > _FIGURE_CONTEXT_MAX
+        or "[CODE" in sentence
+        or "[FIGURE" in sentence
+    ):
+        sentence = ""
+    if sentence:
+        front = sentence
+    elif caption:
+        front = f"What does this figure show? ({caption})"
+    else:
+        return None
+    back = f"[{token}]" + (f"\n{caption}" if caption else "")
+    return Flashcard(front, back, [], card_type="recall", code_ref=token)
 
 
 def _clean_code_description(text: str) -> bool:
@@ -769,18 +832,20 @@ def _quality_gate(
             or back.lstrip().startswith("```")
         ):
             card.card_type = "command"
-        has_code = "```" in back or "[CODE" in back or "`" in back
-        # A card tied to a code asset must carry its ref so it can be keyed and
+        has_asset = (
+            "```" in back or "[CODE" in back or "[FIGURE" in back or "`" in back
+        )
+        # A card tied to an asset must carry its ref so it can be keyed and
         # deduped by asset later (issue #36). A model card that cites [CODE n]
-        # in its body but omits code_ref gets repaired here.
+        # or [FIGURE n] in its body but omits code_ref gets repaired here.
         if not card.code_ref:
-            token_match = re.search(r"\[(CODE \d+)\]", front + back)
+            token_match = re.search(r"\[((?:CODE|FIGURE) \d+)(?::[^\]]*)?\]", front + back)
             if token_match:
                 card.code_ref = token_match.group(1)
-        if card.card_type in _CODE_REQUIRED_TYPES and not has_code:
+        if card.card_type in _CODE_REQUIRED_TYPES and not has_asset:
             continue
-        # short backs are fine when they cite code — the token expands at export
-        if len(back) < _MIN_BACK_CHARS and not has_code:
+        # short backs are fine when they cite an asset — the token expands at export
+        if len(back) < _MIN_BACK_CHARS and not has_asset:
             continue
         if any(m in front or m in back for m in _LEAK_MARKERS):
             continue

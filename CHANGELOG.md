@@ -10,6 +10,13 @@ Review of the Structs, Classes & Objects deck (issue
 1,077 cards across 403 fragmented sections, many repeated.
 
 ### Fixed
+- **Figures actually used**: the model rarely cites `[FIGURE n]`, so figures
+  were registered but never embedded. A deterministic backfill now gives each
+  figure with nearby prose or a caption its own recall card (prompt = the prose
+  sentence, else the caption; answer = the image token plus caption), and the
+  exporter swaps the token for the downloaded image. Diagram-fence placeholder
+  captions (`mermaid`, …) are ignored, uncaptioned figures with no prose are
+  skipped, and figures the model already cited are not duplicated.
 - **Over-fragmentation removed**: `generate`/`generate-md` no longer pre-split
   long sections into `"<heading> (part N)"` fragments. Sections stay logical
   (H1/H2); the generator chunks long sections internally for both providers
