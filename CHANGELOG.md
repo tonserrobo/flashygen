@@ -13,13 +13,20 @@ across 403 fragmented sections, many repeated. Follow-up work is tracked in
 [#39](https://github.com/tonserrobo/flashygen/issues/39).
 
 ### Fixed
-- **Figures actually used**: the model rarely cites `[FIGURE n]`, so figures
-  were registered but never embedded. A deterministic backfill now gives each
-  figure with nearby prose or a caption its own recall card (prompt = the prose
-  sentence, else the caption; answer = the image token plus caption), and the
-  exporter swaps the token for the downloaded image. Diagram-fence placeholder
-  captions (`mermaid`, …) are ignored, uncaptioned figures with no prose are
-  skipped, and figures the model already cited are not duplicated.
+- **Figures actually used** ([#37](https://github.com/tonserrobo/flashygen/issues/37)):
+  the model rarely cites `[FIGURE n]`, so figures were registered but never
+  embedded. A deterministic backfill now gives each figure with nearby prose or
+  a caption a recognition card — the image is the front (`What does this figure
+  show?` + token) and the answer is the prose sentence or caption — and the
+  exporter swaps the token for the downloaded image. Uncaptioned figures with no
+  prose are skipped, diagram-fence placeholder captions (`mermaid`, …) are
+  ignored, and figures the model already cited are not duplicated.
+- **Code coverage no longer masked by a bad model cloze**
+  ([#36](https://github.com/tonserrobo/flashygen/issues/36)): the cloze backfill
+  treated *any* model-emitted `cloze` as covering its token. If the model
+  hallucinated blanks, that cloze was later dropped by the quality gate and the
+  token ended up with no card at all. Model clozes are now validated against the
+  registry before being trusted, so the deterministic cloze still runs.
 - **Over-fragmentation removed**: `generate`/`generate-md` no longer pre-split
   long sections into `"<heading> (part N)"` fragments. Sections stay logical
   (H1/H2); the generator chunks long sections internally for both providers

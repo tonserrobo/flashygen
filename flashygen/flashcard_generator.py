@@ -216,6 +216,18 @@ class FlashcardGenerator:
             # content gets a dedicated focused call instead of relying on the
             # main prompt's single card to also be a cloze.
             if assets:
+                by_token = {a["token"]: a for a in assets}
+                # A model-emitted cloze that the quality gate would reject must
+                # not count as "covered" — otherwise the deterministic cloze is
+                # skipped and the token ends up with no card at all (issue #36).
+                all_cards = [
+                    c for c in all_cards
+                    if c.card_type != "cloze"
+                    or (
+                        c.code_ref in by_token
+                        and _clean_blanks(c.blanks, by_token[c.code_ref]["content"]) == c.blanks
+                    )
+                ]
                 covered = {c.code_ref for c in all_cards if c.card_type == "cloze"}
                 # Code assets a Q/A card already presents in full need no extra
                 # formatted code-block card (issue #31).
@@ -508,13 +520,13 @@ _FIGURE_CONTEXT_MAX = 200
 
 
 def _figure_card(asset: dict, context: str = "") -> Flashcard | None:
-    """One recall card per figure so the image actually lands in the deck (issue #36).
+    """One recognition card per figure so the image actually lands in the deck.
 
     Figures are registered as ``[FIGURE n]`` markers but the model almost never
-    cites them, so left to the prompt they are never embedded. The prompt is the
-    nearest prose sentence, falling back to the author's caption; the answer is
-    the image token (plus the caption as text). Figures with neither prose nor
-    caption have nothing to ask about and are skipped.
+    cites them, so left to the prompt they are never embedded. The image is the
+    prompt (unique token, so no duplicate fronts) and the answer is the author's
+    caption or the nearest prose sentence. A figure with neither has nothing to
+    ask about and is skipped (issue #37).
     """
     token = asset["token"]
     caption = str(asset.get("caption") or "").strip()
@@ -528,14 +540,10 @@ def _figure_card(asset: dict, context: str = "") -> Flashcard | None:
         or "[FIGURE" in sentence
     ):
         sentence = ""
-    if sentence:
-        front = sentence
-    elif caption:
-        front = f"What does this figure show? ({caption})"
-    else:
+    answer = sentence or caption
+    if not answer:
         return None
-    back = f"[{token}]" + (f"\n{caption}" if caption else "")
-    return Flashcard(front, back, [], card_type="recall", code_ref=token)
+    return Flashcard(f"What does this figure show?\n[{token}]", answer, [], card_type="recall", code_ref=token)
 
 
 def _clean_code_description(text: str) -> bool:
@@ -833,7 +841,10 @@ def _quality_gate(
         ):
             card.card_type = "command"
         has_asset = (
-            "```" in back or "[CODE" in back or "[FIGURE" in back or "`" in back
+            "```" in back
+            or "`" in back
+            or "[CODE" in front + back
+            or "[FIGURE" in front + back
         )
         # A card tied to an asset must carry its ref so it can be keyed and
         # deduped by asset later (issue #36). A model card that cites [CODE n]

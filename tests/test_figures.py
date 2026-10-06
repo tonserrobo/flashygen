@@ -22,17 +22,17 @@ def _figure(token="FIGURE 1", caption="Actor lifecycle"):
     return {"token": token, "kind": "figure", "url": "https://x.test/y.png", "caption": caption}
 
 
-def test_figure_card_prefers_surrounding_prose():
+def test_figure_card_uses_image_front_and_prose_back():
     card = _figure_card(_figure("FIGURE 2", "Hierarchy"), "The diagram shows the class hierarchy.")
-    assert card.front == "The diagram shows the class hierarchy."
-    assert card.back == "[FIGURE 2]\nHierarchy"
+    assert card.front == "What does this figure show?\n[FIGURE 2]"
+    assert card.back == "The diagram shows the class hierarchy."
     assert card.code_ref == "FIGURE 2" and card.card_type == "recall"
 
 
 def test_figure_card_falls_back_to_caption():
     card = _figure_card(_figure("FIGURE 3", "Actor lifecycle"), "")
-    assert card.front == "What does this figure show? (Actor lifecycle)"
-    assert card.back == "[FIGURE 3]\nActor lifecycle"
+    assert card.front == "What does this figure show?\n[FIGURE 3]"
+    assert card.back == "Actor lifecycle"
 
 
 def test_figure_card_skips_uncaptioned_figure_without_prose():
@@ -43,12 +43,12 @@ def test_figure_card_ignores_diagram_language_placeholder_caption():
     asset = {"token": "FIGURE 6", "kind": "figure", "url": "", "caption": "mermaid"}
     assert _figure_card(asset, "") is None
     card = _figure_card(asset, "The flow below shows the retry loop.")
-    assert card.front == "The flow below shows the retry loop."
+    assert card.back == "The flow below shows the retry loop."
 
 
 def test_figure_card_rejects_prose_with_embedded_tokens():
     card = _figure_card(_figure("FIGURE 5", "X"), "The code uses [CODE 1] here.")
-    assert card.front == "What does this figure show? (X)"
+    assert card.back == "X"  # falls back to the caption, not the token-laden prose
 
 
 def test_asset_context_finds_captioned_figure_token():
@@ -72,8 +72,8 @@ def test_generate_backfills_figure_card(monkeypatch):
     cards = gen.generate_flashcards(content, "T", assets=assets)
     figures = [c for c in cards if c.code_ref == "FIGURE 1"]
     assert len(figures) == 1
-    assert figures[0].back == "[FIGURE 1]\nActor lifecycle"
-    assert figures[0].front == "The diagram below shows the Actor lifecycle."
+    assert figures[0].front == "What does this figure show?\n[FIGURE 1]"
+    assert figures[0].back == "The diagram below shows the Actor lifecycle."
 
 
 def test_generate_does_not_duplicate_already_cited_figure(monkeypatch):

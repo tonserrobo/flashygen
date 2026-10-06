@@ -110,6 +110,21 @@ def test_cloze_backfill_falls_back_to_recall_when_no_blanks(monkeypatch):
     assert "Replication setup:" in fallback[0].front
 
 
+def test_backfill_covers_token_when_model_cloze_is_invalid(monkeypatch):
+    """A hallucinated model cloze must not mask the deterministic backfill (issue #36)."""
+    from flashygen import flashcard_generator as fg
+    gen = FlashcardGenerator(None, provider="ollama", validate=False)
+    gen.ollama = _FakeOllama([_cloze_raw(["DOREPLIFETIME"], ref="CODE 1")])  # not in CODE 1
+    monkeypatch.setattr(fg, "_generate_code_cloze", lambda client, asset, context="": Flashcard(
+        "Replication macro", "[CODE 1]", [], card_type="cloze", code_ref="CODE 1",
+        blanks=["ReplicatedUsing"],
+    ))
+    content = "[CODE 1]\n```cpp\n" + CODE + "\n```"
+    cards = gen.generate_flashcards(content, "T", assets=ASSETS)
+    clozes = [c for c in cards if c.card_type == "cloze" and c.code_ref == "CODE 1"]
+    assert len(clozes) == 1 and clozes[0].blanks == ["ReplicatedUsing"]
+
+
 def test_generate_backfills_cloze_for_uncited_code(monkeypatch):
     """Every [CODE n] in a section gets a cloze card even when the main call cites none."""
     from flashygen import flashcard_generator as fg
