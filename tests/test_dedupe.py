@@ -148,3 +148,13 @@ def test_deterministic_dedup_never_empties_a_section():
     kept, dropped = _dedupe_cards([a, b])
     assert len(kept) == 1 and dropped == 1  # section keeps one card
 
+
+def test_dedupe_disambiguates_duplicate_cloze_fronts():
+    """Different code blocks sharing a prose hint must not ask the same question (issue #39)."""
+    from flashygen.flashcard_generator import _dedupe_cards
+    a = Flashcard("The code shows the pattern.", "[CODE 1]", card_type="cloze", code_ref="CODE 1", blanks=["x"])
+    b = Flashcard("The code shows the pattern.", "[CODE 2]", card_type="cloze", code_ref="CODE 2", blanks=["y"])
+    kept, dropped = _dedupe_cards([a, b])
+    assert len(kept) == 2 and dropped == 0
+    assert len({c.front for c in kept}) == 2
+

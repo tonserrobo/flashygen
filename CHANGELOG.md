@@ -13,6 +13,24 @@ across 403 fragmented sections, many repeated. Follow-up work is tracked in
 [#39](https://github.com/tonserrobo/flashygen/issues/39).
 
 ### Fixed
+- **Asset markers no longer leak into cloze/command fronts**
+  ([#41](https://github.com/tonserrobo/flashygen/issues/41)): `_front_from_context`
+  and model cloze hints now scrub `[CODE n]`/`[FIGURE n]` markers, and command
+  fronts are scrubbed in the quality gate (dropped if nothing remains). The
+  answer code/image is no longer rendered on the front of the card.
+- **Duplicate cloze questions disambiguated**
+  ([#39](https://github.com/tonserrobo/flashygen/issues/39)): when two code
+  blocks shared a prose hint, several cloze cards asked the identical question.
+  Repeats now fall back to their asset token (`Complete the code (CODE n)`).
+- **Figures without a caption now card from surrounding prose**
+  ([#38](https://github.com/tonserrobo/flashygen/issues/38)): a permissive
+  answer derivation accepts truncated/bulleted context (not just capitalised
+  sentences), so uncaptioned diagrams get a usable description. 76/77 figures in
+  the Structs/Classes note now embed.
+- **Less code-card volume**: the full code-block `command` card is now emitted
+  only when the cloze call fails, instead of alongside every cloze — the two
+  roughly doubled the code cards (#31). The Structs/Classes deck drops from
+  ~1,177 to ~800 cards.
 - **Markdown fence pairing made robust**
   ([#40](https://github.com/tonserrobo/flashygen/issues/40)): a stray
   two-backtick line (`` `` ``) or a language-tagged line used as a closer

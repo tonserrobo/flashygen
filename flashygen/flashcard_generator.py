@@ -21,6 +21,12 @@ _CHUNK_MAX_CHARS = 1200
 # Matches a figure marker with or without its ": caption" suffix, capturing the
 # bare token (e.g. "[FIGURE 1: Actor]" -> "FIGURE 1").
 _FIGURE_TOKEN_RE = re.compile(r"\[(FIGURE \d+)(?::[^\]]*)?\]")
+# Any asset marker (with optional caption), used to scrub derived card fronts.
+_ASSET_MARKER_RE = re.compile(r"\[(?:CODE|FIGURE) \d+[^\]]*\]")
+
+
+def _strip_asset_markers(text: str) -> str:
+    return _ASSET_MARKER_RE.sub("", text)
 
 
 class Flashcard:
@@ -229,15 +235,6 @@ class FlashcardGenerator:
                     )
                 ]
                 covered = {c.code_ref for c in all_cards if c.card_type == "cloze"}
-                # Code assets a Q/A card already presents in full need no extra
-                # formatted code-block card (issue #31).
-                qa_cites: set[str] = set()
-                for c in all_cards:
-                    if c.card_type == "cloze":
-                        continue
-                    qa_cites.update(re.findall(r"\[(CODE \d+)\]", c.front + c.back))
-                    if c.code_ref:
-                        qa_cites.add(c.code_ref)
                 for token in dict.fromkeys(re.findall(r"\[(CODE \d+)\]", content)):
                     if token in covered:
                         continue
@@ -250,18 +247,16 @@ class FlashcardGenerator:
                     if cloze:
                         all_cards.append(cloze)
                         console.print(f"[dim]  + cloze card for [{token}][/dim]")
-                        # Alongside the cloze, surface the full formatted block as a
-                        # command card when nothing else in the section does (issue #31).
-                        if cloze.card_type == "cloze" and token not in qa_cites:
-                            cmd = _code_command_card(asset, _asset_context(content, token))
-                            if cmd:
-                                all_cards.append(cmd)
-                                console.print(f"[dim]  + code card for [{token}][/dim]")
                     else:
-                        fallback = _code_fallback_card(asset, _asset_context(content, token))
+                        # Cloze failed, so fall back to the full formatted block via
+                        # a command card (issue #29). The command card is no longer
+                        # emitted alongside every cloze: emitting both roughly
+                        # doubled the code cards for no extra recall value (#31).
+                        fallback = _code_command_card(asset, _asset_context(content, token)) \
+                            or _code_fallback_card(asset, _asset_context(content, token))
                         if fallback:
                             all_cards.append(fallback)
-                            console.print(f"[dim]  + recall card for [{token}] (cloze yielded nothing)[/dim]")
+                            console.print(f"[dim]  + code card for [{token}] (cloze yielded nothing)[/dim]")
 
         # Deterministic figure coverage (issue #36): the model rarely cites
         # [FIGURE n], so each figure with nearby prose or a caption gets its own
@@ -492,8 +487,11 @@ def _front_from_context(context: str, token: str) -> str:
         cleaned = re.sub(r"^\s*\|.*$", "", cleaned, flags=re.M)
         cleaned = re.sub(r"^[|\s-]+$", "", cleaned, flags=re.M)
         cleaned = re.sub(r"```.*?```", "", cleaned, flags=re.S)
+        # Neighbouring code/figure markers must not leak into the front — a
+        # marker renders the asset (the answer) on the front (issue #41).
+        cleaned = _strip_asset_markers(cleaned)
         for sentence in re.split(r"(?<=[.!?])\s+", cleaned):
-            s = sentence.strip()
+            s = sentence.strip().strip("|").strip()
             if len(s) >= 15 and "|" not in s and not s.startswith(("#", "-", "`")) and s[0].isupper():
                 return s
     return f"Complete the code ({token})"
@@ -519,14 +517,38 @@ def _code_fallback_card(asset: dict, context: str = "") -> Flashcard | None:
 _FIGURE_CONTEXT_MAX = 200
 
 
+def _figure_answer(context: str) -> str:
+    """Nearest prose line for a figure, tolerant of truncated/bulleted context.
+
+    ``_front_from_context`` needs a capitalised sentence, but a figure's
+    surrounding window often starts mid-sentence or is a bullet list. Accept the
+    first real prose line (bullets unwrapped, markers/headings/tables skipped)
+    so uncaptioned diagrams still get a usable description (issue #38).
+    """
+    ctx = (context or "").strip()
+    if not ctx or ctx.lower() == "(none)":
+        return ""
+    cleaned = re.sub(r"```.*?```", "", ctx, flags=re.S)
+    cleaned = _strip_asset_markers(cleaned)
+    candidates: list[str] = []
+    for raw in cleaned.split("\n"):
+        s = raw.strip().lstrip("-*•> ").replace("**", "").strip()
+        if len(s) >= 15 and not s.startswith(("#", "|", "`")) and "|" not in s:
+            candidates.append(s[:_FIGURE_CONTEXT_MAX])
+    for s in candidates:  # prefer a real sentence over a truncated fragment
+        if s[0].isupper():
+            return s
+    return candidates[0] if candidates else ""
+
+
 def _figure_card(asset: dict, context: str = "") -> Flashcard | None:
     """One recognition card per figure so the image actually lands in the deck.
 
     Figures are registered as ``[FIGURE n]`` markers but the model almost never
     cites them, so left to the prompt they are never embedded. The image is the
     prompt (unique token, so no duplicate fronts) and the answer is the author's
-    caption or the nearest prose sentence. A figure with neither has nothing to
-    ask about and is skipped (issue #37).
+    caption or the nearest prose. A figure with neither has nothing to ask about
+    and is skipped (issue #37).
     """
     token = asset["token"]
     caption = str(asset.get("caption") or "").strip()
@@ -540,7 +562,7 @@ def _figure_card(asset: dict, context: str = "") -> Flashcard | None:
         or "[FIGURE" in sentence
     ):
         sentence = ""
-    answer = sentence or caption
+    answer = sentence or _figure_answer(context) or caption
     if not answer:
         return None
     return Flashcard(f"What does this figure show?\n[{token}]", answer, [], card_type="recall", code_ref=token)
@@ -617,7 +639,9 @@ def _generate_code_cloze(client: Any, asset: dict, context: str = "") -> Flashca
             )
         blanks = _clean_blanks(item.get("blanks", []), asset["content"])
         if blanks:
-            hint = str(item.get("hint", "")).strip()
+            hint = _strip_asset_markers(str(item.get("hint", "")).strip()).strip("|").strip()
+            if "|" in hint:
+                hint = ""
             return Flashcard(
                 hint or _front_from_context(context, asset["token"]),
                 f"[{asset['token']}]",
@@ -731,6 +755,23 @@ def _dedupe_cards(cards: list[Flashcard]) -> tuple[list[Flashcard], int]:
     treated as duplicates.
     """
     drop: set[int] = set()
+
+    # Distinct code blocks often share the same prose hint, so several cloze
+    # cards end up asking the identical question. Disambiguate the repeats with
+    # their asset token so the deck has no duplicate questions (issue #39).
+    seen_cloze: set[str] = set()
+    for c in cards:
+        if c.card_type != "cloze":
+            continue
+        norm = _normalize(c.front)
+        if norm in seen_cloze:
+            n = 0
+            while norm in seen_cloze:
+                n += 1
+                c.front = f"Complete the code ({c.code_ref})" + (f" ({n})" if n > 1 else "")
+                norm = _normalize(c.front)
+        seen_cloze.add(norm)
+
     exact: set[tuple] = set()
     for i, c in enumerate(cards):
         if c.card_type == "cloze":
@@ -853,6 +894,13 @@ def _quality_gate(
             token_match = re.search(r"\[((?:CODE|FIGURE) \d+)(?::[^\]]*)?\]", front + back)
             if token_match:
                 card.code_ref = token_match.group(1)
+        # A command front must not render the asset (the answer) — scrub any
+        # markers the model left there; an empty front is unusable (issue #41).
+        if card.card_type == "command":
+            card.front = _strip_asset_markers(card.front).strip()
+            if not card.front:
+                continue
+            front = card.front
         if card.card_type in _CODE_REQUIRED_TYPES and not has_asset:
             continue
         # short backs are fine when they cite an asset — the token expands at export

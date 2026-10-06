@@ -94,6 +94,19 @@ def test_cloze_front_skips_headings_and_table_rows():
     assert front == "The code shows a persistent local counter."
 
 
+def test_front_from_context_strips_asset_markers():
+    """Neighbouring markers must not leak into a derived front (issue #41)."""
+    from flashygen.flashcard_generator import _front_from_context
+    ctx = "[CODE 1]\n\n[CODE 2]\n\nThis section demonstrates creating objects."
+    assert _front_from_context(ctx, "CODE 1") == "This section demonstrates creating objects."
+
+
+def test_cloze_hint_with_markers_is_scrubbed():
+    client = _FakeOllama([{"blanks": ["ReplicatedUsing"], "hint": "How it works: [CODE 9]"}])
+    card = _generate_code_cloze(client, ASSETS[0])
+    assert "[CODE" not in card.front
+
+
 def test_cloze_backfill_falls_back_to_recall_when_no_blanks(monkeypatch):
     """A code asset the cloze call can't blank still gets a card (issue #29)."""
     from flashygen import flashcard_generator as fg
@@ -104,10 +117,10 @@ def test_cloze_backfill_falls_back_to_recall_when_no_blanks(monkeypatch):
     cards = gen.generate_flashcards(content, "T", assets=ASSETS)
     fallback = [c for c in cards if c.code_ref == "CODE 1"]
     assert len(fallback) == 1
-    # a code-answer card is reclassified to "command" by the quality gate (issue #27)
+    # the full code block is the fallback card (issue #29)
     assert fallback[0].card_type == "command"
     assert fallback[0].back == "[CODE 1]"
-    assert "Replication setup:" in fallback[0].front
+    assert fallback[0].front.startswith("Recall the")
 
 
 def test_backfill_covers_token_when_model_cloze_is_invalid(monkeypatch):
@@ -275,8 +288,8 @@ def test_exported_deck_never_contains_nested_cloze(tmp_path):
     assert "{{c1::{{" not in note and "{{c2::{{" not in note
 
 
-def test_backfill_adds_full_code_command_card(monkeypatch):
-    """A cloze asset also gets a formatted code-block command card (issue #31)."""
+def test_no_command_card_alongside_a_successful_cloze(monkeypatch):
+    """A cloze is enough; a full code-block card is only the fallback (issue #31/#42)."""
     from flashygen import flashcard_generator as fg
     gen = FlashcardGenerator(None, provider="ollama", validate=False)
     gen.ollama = _FakeOllama([{
@@ -289,11 +302,8 @@ def test_backfill_adds_full_code_command_card(monkeypatch):
     content = ("Replication setup:\nThe macro is required for replication to work correctly.\n"
                "[CODE 1]\n```cpp\n" + CODE + "\n```")
     cards = gen.generate_flashcards(content, "T", assets=ASSETS)
-    types = {c.card_type for c in cards}
-    assert "cloze" in types and "command" in types
-    cmd = next(c for c in cards if c.card_type == "command")
-    assert cmd.back == "[CODE 1]" and cmd.code_ref == "CODE 1"
-    assert cmd.front.startswith("Recall the")
+    assert any(c.card_type == "cloze" for c in cards)
+    assert not any(c.card_type == "command" for c in cards)
 
 
 def test_no_extra_command_card_when_qa_already_cites_asset(monkeypatch):

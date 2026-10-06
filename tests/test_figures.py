@@ -48,7 +48,16 @@ def test_figure_card_ignores_diagram_language_placeholder_caption():
 
 def test_figure_card_rejects_prose_with_embedded_tokens():
     card = _figure_card(_figure("FIGURE 5", "X"), "The code uses [CODE 1] here.")
-    assert card.back == "X"  # falls back to the caption, not the token-laden prose
+    # the marker is scrubbed, so the clean sentence is usable as the answer
+    assert "[CODE" not in card.back
+
+
+def test_figure_card_uses_permissive_context_for_bulleted_prose():
+    """A truncated/bulleted context still yields a description (issue #38)."""
+    asset = {"token": "FIGURE 8", "kind": "figure", "url": "", "caption": "mermaid"}
+    card = _figure_card(asset, "and dependencies, using notation.\n- **Transitive inheritance**: A class inherits through a chain.")
+    assert card is not None
+    assert "Transitive inheritance" in card.back
 
 
 def test_asset_context_finds_captioned_figure_token():

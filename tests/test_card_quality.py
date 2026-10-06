@@ -102,6 +102,20 @@ def test_gate_still_drops_duplicate_plain_recall_fronts():
     assert len(kept) == 1 and dropped == 1
 
 
+def test_gate_strips_markers_from_command_front():
+    card = Flashcard("See [CODE 1] for the syntax", "[CODE 1]", card_type="command", code_ref="CODE 1")
+    assets = [{"token": "CODE 1", "kind": "code", "language": "cpp", "content": "int x;"}]
+    kept, _ = _quality_gate([card], assets=assets)
+    assert kept and "[CODE" not in kept[0].front
+
+
+def test_gate_drops_command_card_whose_front_is_only_a_marker():
+    card = Flashcard("[CODE 1]", "[CODE 1]", card_type="command", code_ref="CODE 1")
+    assets = [{"token": "CODE 1", "kind": "code", "language": "cpp", "content": "int x;"}]
+    kept, dropped = _quality_gate([card], assets=assets)
+    assert kept == [] and dropped == 1
+
+
 def test_gate_repairs_missing_code_ref_from_cited_token():
     """A command card citing [CODE n] but omitting code_ref must be repairable (issue #36)."""
     card = Flashcard(
